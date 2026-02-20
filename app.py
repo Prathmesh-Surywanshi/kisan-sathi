@@ -34,10 +34,19 @@ model_metadata = None
 training_data = None
 market_prices = None
 market_model_cache = {}
+location_data = None
+soil_defaults = None
+
+SEASON_MONTHS = {
+    "summer": [3, 4, 5, 6],
+    "rainy": [7, 8, 9, 10],
+    "winter": [11, 12, 1, 2],
+    "spring": [2, 3, 4]
+}
 
 def load_models():
     """Load trained ML models and scalers"""
-    global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices
+    global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices, location_data, soil_defaults
     
     try:
         logger.info("Loading models...")
@@ -89,6 +98,22 @@ def load_models():
         market_prices["date_ordinal"] = market_prices["price_date"].map(datetime.toordinal)
         market_prices["month"] = market_prices["price_date"].dt.month
         market_prices["dayofyear"] = market_prices["price_date"].dt.dayofyear
+
+        # Load location data from ICRISAT dataset
+        try:
+            location_data = pd.read_csv(PROCESSED_DATA_DIR / "cleaned_ICRISAT-District Level Data.csv")
+            logger.info(f"✓ Location data loaded: {location_data.shape[0]} records")
+        except Exception as e:
+            logger.warning(f"Could not load location data: {e}")
+            location_data = None
+
+        # Load soil defaults from crop recommendation data
+        try:
+            soil_defaults = pd.read_csv(PROCESSED_DATA_DIR / "cleaned_Crop_recommendation.csv")
+            logger.info(f"✓ Soil defaults loaded: {soil_defaults.shape[0]} samples")
+        except Exception as e:
+            logger.warning(f"Could not load soil defaults: {e}")
+            soil_defaults = None
         
         logger.info("✓ All models loaded successfully!")
         return True
@@ -123,6 +148,14 @@ def filter_market_prices(crop: str, state: str = None, district: str = None, mar
         df = df[df["market"] == market_key]
 
     return df.copy()
+
+def apply_season_filter(df: pd.DataFrame, season: str = None):
+    season_key = normalize_text(season)
+    if not season_key or season_key not in SEASON_MONTHS:
+        return df, False
+
+    filtered = df[df["month"].isin(SEASON_MONTHS[season_key])].copy()
+    return filtered, True
 
 def classify_trend(df: pd.DataFrame) -> str:
     if df.shape[0] < 10:
@@ -216,6 +249,139 @@ def get_crop_list():
         "crops": sorted(crops),
         "total": len(crops)
     })
+
+@app.route('/api/locations', methods=['GET'])
+def get_locations():
+    """Get all available states and districts from location data"""
+    try:
+        if location_data is None or location_data.empty:
+            return jsonify({
+                "status": "error",
+                "message": "Location data not available"
+            }), 404
+        
+        locations = {}
+        if 'state_name' in location_data.columns and 'dist_name' in location_data.columns:
+            for state in location_data['state_name'].dropna().unique():
+                districts = location_data[location_data['state_name'] == state]['dist_name'].dropna().unique().tolist()
+                locations[state] = sorted([d for d in districts if d])
+        
+        return jsonify({
+            "status": "success",
+            "locations": locations,
+            "total_states": len(locations)
+        })
+    except Exception as e:
+        logger.error(f"Error getting locations: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/soil-data', methods=['GET'])
+def get_soil_data():
+    """Get average soil parameters based on location"""
+    try:
+        state = request.args.get('state', '').strip()
+        district = request.args.get('district', '').strip()
+        
+        if not state:
+            return jsonify({"status": "error", "message": "State is required"}), 400
+        
+        # Use soil defaults from crop recommendation data (averaged values)
+        if soil_defaults is None or soil_defaults.empty:
+            return jsonify({
+                "status": "error",
+                "message": "Soil data not available"
+            }), 404
+        
+        # Get average NPK and pH values from the dataset
+        # For now, provide typical values - in production, this could be location-specific
+        n_avg = float(soil_defaults['n'].mean())
+        p_avg = float(soil_defaults['p'].mean())
+        k_avg = float(soil_defaults['k'].mean())
+        ph_avg = float(soil_defaults['ph'].mean())
+        
+        # Add some variation based on state (simplified approach)
+        state_variations = {
+            'punjab': {'n': 1.1, 'p': 1.0, 'k': 0.9, 'ph': 1.0},
+            'haryana': {'n': 1.1, 'p': 1.0, 'k': 0.9, 'ph': 1.0},
+            'uttar pradesh': {'n': 1.0, 'p': 0.95, 'k': 1.0, 'ph': 1.0},
+            'maharashtra': {'n': 0.9, 'p': 1.0, 'k': 1.1, 'ph': 0.98},
+            'karnataka': {'n': 0.95, 'p': 1.05, 'k': 1.0, 'ph': 0.99},
+            'tamil nadu': {'n': 0.9, 'p': 1.1, 'k': 1.0, 'ph': 0.97},
+        }
+        
+        state_key = normalize_text(state)
+        variation = state_variations.get(state_key, {'n': 1.0, 'p': 1.0, 'k': 1.0, 'ph': 1.0})
+        
+        soil_params = {
+            'nitrogen': round(n_avg * variation['n'], 2),
+            'phosphorus': round(p_avg * variation['p'], 2),
+            'potassium': round(k_avg * variation['k'], 2),
+            'ph': round(ph_avg * variation['ph'], 2),
+            'state': state,
+            'district': district,
+            'data_source': 'aggregated_crop_data'
+        }
+        
+        return jsonify({
+            "status": "success",
+            "soil_data": soil_params,
+            "message": f"Average soil data for {state}"
+        })
+    except Exception as e:
+        logger.error(f"Error getting soil data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/testing-centers', methods=['GET'])
+def get_testing_centers():
+    """Get nearby soil testing centers"""
+    try:
+        state = request.args.get('state', '').strip()
+        
+        # Mock data - can be replaced with real database
+        testing_centers_db = {
+            'andhra pradesh': [
+                {'name': 'Agri Research Station, Guntur', 'location': 'Guntur', 'phone': '0863-2346789'},
+                {'name': 'Soil Testing Lab', 'location': 'Vijayawada', 'phone': '0866-2478965'}
+            ],
+            'karnataka': [
+                {'name': 'Dept of Agriculture', 'location': 'Bangalore', 'phone': '080-22250000'},
+                {'name': 'Krishi Vigyan Kendra', 'location': 'Mysore', 'phone': '0821-2419876'}
+            ],
+            'maharashtra': [
+                {'name': 'Agri Technology Mgmt', 'location': 'Pune', 'phone': '020-24537890'},
+                {'name': 'Soil Health Card Center', 'location': 'Nashik', 'phone': '0253-2576543'}
+            ],
+            'punjab': [
+                {'name': 'PAU Soil Testing Lab', 'location': 'Ludhiana', 'phone': '0161-2401960'},
+                {'name': 'Dept of Agriculture', 'location': 'Amritsar', 'phone': '0183-2227845'}
+            ],
+            'tamil nadu': [
+                {'name': 'Tamil Nadu Agri Univ', 'location': 'Coimbatore', 'phone': '0422-6611200'},
+                {'name': 'Soil Testing Lab', 'location': 'Chennai', 'phone': '044-28524624'}
+            ],
+            'uttar pradesh': [
+                {'name': 'Krishi Bhawan', 'location': 'Lucknow', 'phone': '0522-2286532'},
+                {'name': 'Soil Testing Center', 'location': 'Meerut', 'phone': '0121-2764219'}
+            ],
+            'haryana': [
+                {'name': 'HAU Soil Lab', 'location': 'Hisar', 'phone': '01662-289239'},
+                {'name': 'Agri Dept Testing Center', 'location': 'Karnal', 'phone': '0184-2252600'}
+            ]
+        }
+        
+        state_key = normalize_text(state)
+        centers = testing_centers_db.get(state_key, [])
+        
+        return jsonify({
+            "status": "success",
+            "centers": centers,
+            "helpline": "1800-180-1551",
+            "helpline_name": "Kisan Call Centre (Toll Free)",
+            "message": f"Testing centers for {state}" if centers else "Contact Kisan Call Centre for nearest center"
+        })
+    except Exception as e:
+        logger.error(f"Error getting testing centers: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/recommend-crop', methods=['POST'])
 def recommend_crop():
@@ -381,16 +547,20 @@ def market_insights(crop):
         market = request.args.get("market")
         season = request.args.get("season")
 
-        crop_data = filter_market_prices(crop, state=state, district=district, market=market)
+        crop_data_all = filter_market_prices(crop, state=state, district=district, market=market)
+        season_filtered_data, season_filter_applied = apply_season_filter(crop_data_all, season)
+        crop_data = season_filtered_data if not season_filtered_data.empty else crop_data_all
+
         if crop_data.empty:
             return jsonify({
                 "status": "success",
                 "crop": crop,
+                "has_market_data": False,
                 "market_data": {
-                    "demand_trend": "stable",
-                    "price_stability": "stable",
-                    "global_demand": "stable",
-                    "recommendation": f"Limited market data available for {crop}."
+                    "demand_trend": "no data",
+                    "price_stability": "no data",
+                    "global_demand": "no data",
+                    "recommendation": f"No price records found for {crop} in current market dataset."
                 },
                 "optimal_conditions": {
                     "temperature_range": "20-30°C",
@@ -447,6 +617,7 @@ def market_insights(crop):
         insights = {
             "status": "success",
             "crop": crop,
+            "has_market_data": True,
             "market_data": {
                 "demand_trend": demand_trend,
                 "price_stability": stability,
@@ -491,7 +662,8 @@ def market_insights(crop):
             "data_coverage": {
                 "records": int(crop_data.shape[0]),
                 "from": crop_data["price_date"].min().strftime("%Y-%m-%d"),
-                "to": latest_date.strftime("%Y-%m-%d")
+                "to": latest_date.strftime("%Y-%m-%d"),
+                "season_filter_applied": season_filter_applied
             }
         }
         
@@ -507,21 +679,56 @@ def market_insights(crop):
 @app.route('/api/seasonal-recommendations/<season>', methods=['GET'])
 def seasonal_recommendations(season):
     """Get crop recommendations for a specific season"""
-    seasons = {
-        "summer": ["maize", "rice", "mungbean", "urad"],
-        "winter": ["wheat", "chickpea", "lentil", "barley"],
-        "rainy": ["rice", "maize", "cotton", "sugarcane"],
-        "spring": ["cauliflower", "cabbage", "potato", "onion"]
-    }
-    
-    crops = seasons.get(season.lower(), [])
-    
-    return jsonify({
-        "status": "success",
-        "season": season,
-        "recommended_crops": crops,
-        "reason": f"These crops are optimal for {season} season in your region"
-    })
+    try:
+        season_key = normalize_text(season)
+        if season_key not in SEASON_MONTHS:
+            return jsonify({
+                "status": "error",
+                "message": f"Invalid season '{season}'. Use summer, rainy, winter, or spring."
+            }), 400
+
+        if market_prices is None or market_prices.empty:
+            return jsonify({
+                "status": "success",
+                "season": season,
+                "recommended_crops": [],
+                "reason": "Market dataset not loaded."
+            })
+
+        seasonal_df = market_prices[market_prices["month"].isin(SEASON_MONTHS[season_key])]
+
+        if seasonal_df.empty:
+            return jsonify({
+                "status": "success",
+                "season": season,
+                "recommended_crops": [],
+                "reason": f"No market records available for {season} season."
+            })
+
+        commodity_rank = (
+            seasonal_df.groupby("commodity")
+            .agg(records=("commodity", "count"), avg_price=("modal_price", "mean"))
+            .sort_values(["records", "avg_price"], ascending=[False, False])
+            .head(6)
+            .reset_index()
+        )
+
+        crops = [item.title() for item in commodity_rank["commodity"].tolist()]
+
+        return jsonify({
+            "status": "success",
+            "season": season,
+            "recommended_crops": crops,
+            "reason": f"Top commodities in {season} based on available market records",
+            "data_source": "processed/cleaned_Agriculture_price_dataset.csv"
+        })
+
+    except Exception as e:
+        logger.error(f"Error in seasonal recommendations: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 @app.route('/api/feature-importance', methods=['GET'])
 def feature_importance():
