@@ -1334,12 +1334,15 @@ def ceda_commodities():
 
 @app.route('/api/agmarket/live', methods=['GET'])
 def agmarket_live():
-    """Proxy for live CEDA Agmarknet / data.gov.in mandi prices. source=api|local."""
+    """Fetch live prices from data.gov.in API (aaj ka bhav). 
+    Only uses live APIs - no local data fallback for this endpoint.
+    For price trends and insights, local data is used in other endpoints.
+    """
     commodity = request.args.get("commodity", "").strip()
     source = request.args.get("source", "api").strip().lower()
     if not commodity:
         return jsonify({"status": "error", "message": "commodity is required"}), 400
-    records, err = fetch_agmarket_live(commodity, source=source)
+    
     if source == "local":
         return jsonify({
             "status": "success",
@@ -1348,28 +1351,36 @@ def agmarket_live():
             "message": "Using local dataset only.",
             "records": []
         })
+    
+    # Try to fetch live data from API only
+    records, err = fetch_agmarket_live(commodity, source=source)
+    
     if err == "no_api_key":
         return jsonify({
             "status": "success",
             "source": "backend",
             "live": False,
-            "message": "Set DATA_GOV_IN_API_KEY or AGMARKET_API_KEY in .env for live Aaj ka bhav.",
+            "message": "live price unavailable",
             "records": []
         })
-    if err and not records:
+    
+    if records:
         return jsonify({
             "status": "success",
-            "source": "backend",
-            "live": False,
-            "message": "live prices not found",
-            "records": []
+            "source": "agmarknet",
+            "live": True,
+            "records": records[:50],
+            "latest_date": records[0]["date"] if records else None
         })
+    
+    # API failed or returned no data
+    logger.warning(f"API failed to fetch live prices for {commodity} (err={err})")
     return jsonify({
         "status": "success",
-        "source": "agmarknet",
-        "live": True,
-        "records": records[:50],
-        "latest_date": records[0]["date"] if records else None
+        "source": "backend",
+        "live": False,
+        "message": "live price unavailable",
+        "records": []
     })
 
 

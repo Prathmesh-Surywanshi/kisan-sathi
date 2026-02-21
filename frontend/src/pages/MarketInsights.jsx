@@ -39,8 +39,28 @@ function MarketInsights({ crops = [] }) {
       const res = await fetch(`${API_BASE}/ceda/commodities`);
       const data = await res.json().catch(() => ({}));
       if (data.status === "success" && data.commodities?.length) {
-        setCedaCommodities(data.commodities);
-        const first = data.commodities[0];
+        // Sort commodities - priority crops (Wheat, Tomato, Onion, Potato) on top
+        const priorityCrops = ['wheat', 'tomato', 'onion', 'potato'];
+        const sortedCommodities = data.commodities.sort((a, b) => {
+          const aName = (a?.name || a)?.toLowerCase();
+          const bName = (b?.name || b)?.toLowerCase();
+          const aPriority = priorityCrops.indexOf(aName);
+          const bPriority = priorityCrops.indexOf(bName);
+          
+          // Both in priority list
+          if (aPriority !== -1 && bPriority !== -1) {
+            return aPriority - bPriority;
+          }
+          // Only a in priority list
+          if (aPriority !== -1) return -1;
+          // Only b in priority list
+          if (bPriority !== -1) return 1;
+          // Neither in priority list - keep original order
+          return 0;
+        });
+        
+        setCedaCommodities(sortedCommodities);
+        const first = sortedCommodities[0];
         const firstName = first?.name || first;
         setSelectedCrop(firstName);
         await fetchMarketInsights(firstName);
@@ -92,34 +112,55 @@ function MarketInsights({ crops = [] }) {
         latest_date: historyJson.latest_date || null,
       });
 
-      // Optionally fetch live data separately for Aaj Ka Bhav display (doesn't affect chart)
+      // Fetch live data for Aaj Ka Bhav (API-only, no local fallback)
       try {
         setAajKaBhavLoading(true);
         const liveRes = await fetch(`${API_BASE}/agmarket/live?commodity=${encodeURIComponent(crop)}&source=api`);
         const liveJson = await liveRes.json();
         
         const liveApiRecords = Array.isArray(liveJson.records) ? liveJson.records : [];
+        const isLive = liveJson.live === true;
+        
         setLiveRecords(liveApiRecords);
-        setLiveSource(liveApiRecords.length > 0);
+        setLiveSource(isLive);
 
-        // Compute Aaj Ka Bhav from live API response when available
-        if (liveApiRecords.length) {
+        // Aaj Ka Bhav: Only display if live API returned data
+        if (isLive && liveApiRecords.length) {
           const dates = [...new Set(liveApiRecords.map((r) => r.date).filter(Boolean))].sort();
           const latestDate = dates[dates.length - 1];
           const latestRecs = latestDate ? liveApiRecords.filter((r) => r.date === latestDate) : liveApiRecords;
           if (latestRecs.length) {
             const avgPrice = latestRecs.reduce((s, r) => s + (r.modal_price || 0), 0) / latestRecs.length;
-            setAajKaBhavState({ value: Math.round(avgPrice * 100) / 100, date: latestDate || null, available: true, message: null });
+            setAajKaBhavState({ 
+              value: Math.round(avgPrice * 100) / 100, 
+              date: latestDate || null, 
+              available: true, 
+              message: '✓ Live from API',
+              isLive: true
+            });
           } else {
-            setAajKaBhavState({ value: null, date: null, available: false, message: null });
+            setAajKaBhavState({ value: null, date: null, available: false, message: liveJson.message || 'Live prices not available', isLive: false });
           }
         } else {
-          // Don't show message while loading, only if fetch completes with no data
-          setAajKaBhavState({ value: null, date: null, available: false, message: null });
+          // Live API unavailable or returned no data
+          const message = liveJson.message || 'Live prices not available - API not configured';
+          setAajKaBhavState({ 
+            value: null, 
+            date: null, 
+            available: false, 
+            message: message,
+            isLive: false
+          });
         }
       } catch (liveError) {
         console.error("Error fetching live data for Aaj Ka Bhav:", liveError);
-        setAajKaBhavState({ value: null, date: null, available: false, message: 'Could not fetch live data' });
+        setAajKaBhavState({ 
+          value: null, 
+          date: null, 
+          available: false, 
+          message: 'Could not connect to live price API',
+          isLive: false
+        });
       } finally {
         setAajKaBhavLoading(false);
       }
@@ -273,18 +314,18 @@ function MarketInsights({ crops = [] }) {
                   <div className="summary-card price-card aaj-ka-bhav-card">
                     <span className="summary-label">
                       Aaj ka bhav (₹/quintal)
-                      {aajKaBhavState?.available && (
+                      {aajKaBhavState?.isLive && (
                         <span className="live-dot" title="Live from API" />
                       )}
                     </span>
                     <span className="summary-value">
                       {aajKaBhavLoading
-                        ? <span className="fetching-text">Fetching value...</span>
+                        ? <span className="fetching-text">Fetching live prices...</span>
                         : aajKaBhavState?.available && aajKaBhavState?.value != null
                         ? `₹ ${Number(aajKaBhavState.value).toLocaleString("en-IN")}`
-                        : aajKaBhavState?.message || "live prices not found"}
+                        : aajKaBhavState?.message || "Live prices not available"}
                     </span>
-                    {aajKaBhavState?.available && aajKaBhavState?.date && (
+                    {aajKaBhavState?.isLive && aajKaBhavState?.date && (
                       <span className="summary-meta">{aajKaBhavState.date}</span>
                     )}
                   </div>
@@ -358,9 +399,17 @@ function MarketInsights({ crops = [] }) {
                 </div>
               )}
 
+              {chartData.time_series?.length === 0 && selectedCrop && (
+                <div className="chart-card card error-card">
+                  <div className="error-message-container">
+                    <span className="blinking-error">⚠️ Unable to fetch data</span>
+                  </div>
+                </div>
+              )}
+
               {mandiChartSource.length > 0 && (
                 <div className="chart-card card better-price-chart">
-                  <h3 className="better-price-title">🏪 Kaun se mandi mein zyada bhav milega (Better price by mandi)</h3>
+                  <h3 className="better-price-title">🏪 Global Market Access (Better price by mandi)</h3>
                   <p className="chart-hint better-price-hint">Jo bar lambi hai, us mandi ka rate zyada hai — wahi becho. (Longer bar = better price — sell there.)</p>
                   <div className="chart-wrap bar-chart-wrap better-price-chart-wrap">
                     <ResponsiveContainer width="100%" height={440}>
@@ -422,35 +471,43 @@ function MarketInsights({ crops = [] }) {
                     </div>
                   </div>
 
-                  <div className="card risk-opportunities">
-                    <h3>⚠️ Risk</h3>
-                    <div className="risk-grid">
-                      <div className="risk-item">
-                        <span className="risk-type">Weather</span>
-                        <span className={`risk-pill risk-${(marketData.risk_assessment?.weather_risk || '').toLowerCase()}`}>
-                          {marketData.risk_assessment?.weather_risk || '—'}
-                        </span>
-                      </div>
-                      <div className="risk-item">
-                        <span className="risk-type">Market</span>
-                        <span className={`risk-pill risk-${(marketData.risk_assessment?.market_risk || '').toLowerCase()}`}>
-                          {marketData.risk_assessment?.market_risk || '—'}
-                        </span>
-                      </div>
-                      <div className="risk-item">
-                        <span className="risk-type">Disease</span>
-                        <span className={`risk-pill risk-${(marketData.risk_assessment?.disease_risk || '').toLowerCase()}`}>
-                          {marketData.risk_assessment?.disease_risk || '—'}
-                        </span>
-                      </div>
-                      <div className="risk-item highlight">
-                        <span className="risk-type">Overall</span>
-                        <span className={`risk-pill risk-${(marketData.risk_assessment?.overall_risk || '').toLowerCase()}`}>
-                          {marketData.risk_assessment?.overall_risk || '—'}
-                        </span>
+                  {marketData?.risk_assessment ? (
+                    <div className="card risk-opportunities">
+                      <h3>⚠️ Risk</h3>
+                      <div className="risk-grid">
+                        <div className="risk-item">
+                          <span className="risk-type">Weather</span>
+                          <span className={`risk-pill risk-${(marketData.risk_assessment?.weather_risk || '').toLowerCase()}`}>
+                            {marketData.risk_assessment?.weather_risk || '—'}
+                          </span>
+                        </div>
+                        <div className="risk-item">
+                          <span className="risk-type">Market</span>
+                          <span className={`risk-pill risk-${(marketData.risk_assessment?.market_risk || '').toLowerCase()}`}>
+                            {marketData.risk_assessment?.market_risk || '—'}
+                          </span>
+                        </div>
+                        <div className="risk-item">
+                          <span className="risk-type">Disease</span>
+                          <span className={`risk-pill risk-${(marketData.risk_assessment?.disease_risk || '').toLowerCase()}`}>
+                            {marketData.risk_assessment?.disease_risk || '—'}
+                          </span>
+                        </div>
+                        <div className="risk-item highlight">
+                          <span className="risk-type">Overall</span>
+                          <span className={`risk-pill risk-${(marketData.risk_assessment?.overall_risk || '').toLowerCase()}`}>
+                            {marketData.risk_assessment?.overall_risk || '—'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  ) : selectedCrop ? (
+                    <div className="card card error-card">
+                      <div className="error-message-container">
+                        <span className="blinking-error">⚠️ Unable to fetch risk assessment data</span>
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="card optimal-conditions">
                     <h3>🌱 Good conditions for this crop</h3>
