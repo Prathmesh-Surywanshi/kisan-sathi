@@ -96,6 +96,35 @@ CROP_TRANSLATION_MAP = {
     "उडीद": "blackgram"
 }
 
+# SEASON TRANSLATION MAP (Hindi & Marathi to English)
+SEASON_TRANSLATION_MAP = {
+    # Rainy/Monsoon
+    "बरसात": "rainy",
+    "मानसून": "rainy",
+    "पावसाळी": "rainy",
+    "पावसाळ": "rainy",
+    "मॉनसून": "rainy",
+    
+    # Summer
+    "गर्मी": "summer",
+    "ग्रीष्म": "summer",
+    "उन्हाळी": "summer",
+    "उन्हाळ": "summer",
+    "गर्मी का": "summer",
+    
+    # Winter
+    "सर्दी": "winter",
+    "शीत": "winter",
+    "हिवाळी": "winter",
+    "हिवाळ": "winter",
+    "सर्दियों": "winter",
+    
+    # Spring
+    "वसंत": "spring",
+    "बसंत": "spring",
+    "वसंत ऋतु": "spring",
+}
+
 # STATE TRANSLATION MAP (Hindi & Marathi to English)
 STATE_TRANSLATION_MAP = {
     # Maharashtra
@@ -554,7 +583,11 @@ def _get_known_crops():
 
 def _normalize_farmer_text(text: str):
     normalized = normalize_text(text)
+    # Translate crops (Hindi/Marathi -> English)
     for source, target in CROP_TRANSLATION_MAP.items():
+        normalized = normalized.replace(normalize_text(source), target)
+    # Translate seasons (Hindi/Marathi -> English)
+    for source, target in SEASON_TRANSLATION_MAP.items():
         normalized = normalized.replace(normalize_text(source), target)
     return normalized
 
@@ -566,11 +599,20 @@ def _extract_crop_from_text(text: str):
     return None
 
 def _extract_season_from_text(text: str):
+    # First check for English season names
     for season in SUPPORTED_SEASONS:
         if season in text:
             return season
+    
+    # Then check for Hindi/Marathi season translations
+    for hindi_season, english_season in SEASON_TRANSLATION_MAP.items():
+        if hindi_season.lower() in text.lower():
+            return english_season
+    
+    # Fallback checks
     if "rain" in text or "monsoon" in text or "बरसात" in text or "पावस" in text:
         return "rainy"
+    
     return None
 
 def _detect_intent(text: str):
@@ -1284,12 +1326,20 @@ def process_user_message(message: str, sender: str = None, send_menu: bool = Tru
 
     season_like = text.startswith("season") or intent == "season"
     if season_like:
-        season = text.split(maxsplit=1)[1].strip() if text.startswith("season") and len(text.split(maxsplit=1)) > 1 else _extract_season_from_text(text)
+        # Try to extract season from the text
+        season = _extract_season_from_text(text)
+        
+        # If not found and text starts with "season", try splitting
+        if not season and text.startswith("season") and len(text.split(maxsplit=1)) > 1:
+            season = text.split(maxsplit=1)[1].strip()
+        
+        # If still not found, ask user
         if not season:
             return (_get_translated_text("season_needed", language), False, "main")
 
-        season = normalize_text(season)
-        if season not in SUPPORTED_SEASONS:
+        # Normalize and validate
+        season = normalize_text(season) if season else None
+        if not season or season not in SUPPORTED_SEASONS:
             return (_get_translated_text("invalid_season", language), False, "main")
 
         try:
