@@ -1054,6 +1054,78 @@ def _format_forecast_summary(crop: str, data: dict, language: str = "en"):
             f"Trend: {trend}"
         )
 
+def _format_market_response_for_bot(crop: str, live_records: list, time_series: list, 
+                                     by_mandi: list, latest_record: dict, language: str = "en"):
+    """Format live market data for WhatsApp bot with price, trend, and best mandi."""
+    
+    # Extract current price (from live or latest record)
+    current_price = "N/A"
+    if live_records and len(live_records) > 0:
+        # Live data from API - usually has "price" or "modal_price" field
+        lrec = live_records[0]
+        current_price = lrec.get("price") or lrec.get("modal_price") or lrec.get("value", "N/A")
+    elif latest_record and isinstance(latest_record, dict):
+        # Fallback to latest historical record
+        current_price = latest_record.get("modal_price") or latest_record.get("price", "N/A")
+    
+    # Calculate trend (up/down) based on time series
+    trend_text = "→"  # Neutral
+    if time_series and len(time_series) > 1:
+        prices = []
+        for ts in time_series:
+            p = ts.get("modal_price") or ts.get("price")
+            if p:
+                try:
+                    prices.append(float(p))
+                except:
+                    pass
+        
+        if len(prices) >= 2:
+            if prices[-1] > prices[0]:
+                trend_text = "📈 UP"
+            elif prices[-1] < prices[0]:
+                trend_text = "📉 DOWN"
+    
+    # Find best mandi (highest price usually means better for selling)
+    best_mandi = "N/A"
+    best_price = 0
+    if by_mandi and len(by_mandi) > 0:
+        for mandi in by_mandi:
+            try:
+                mprice = float(mandi.get("avg_price") or mandi.get("price", 0))
+                if mprice > best_price:
+                    best_price = mprice
+                    best_mandi = mandi.get("market") or mandi.get("mandi") or "Local Market"
+            except:
+                pass
+    
+    # Format response by language
+    crop_title = crop.title() if crop else "Crop"
+    
+    if language == "hi":
+        response = (
+            f"🌾 {crop_title} - बाजार भाव\n"
+            f"💰 आज का भाव: ₹{current_price}/क्विंटल\n"
+            f"📈 ट्रेंड: {trend_text}\n"
+            f"🏪 सर्वश्रेष्ठ मंडी: {best_mandi}"
+        )
+    elif language == "mr":
+        response = (
+            f"🌾 {crop_title} - बाजार भाव\n"
+            f"💰 आजचा भाव: ₹{current_price}/क्विंटल\n"
+            f"📈 ट्रेंड: {trend_text}\n"
+            f"🏪 सर्वश्रेष्ठ मंडी: {best_mandi}"
+        )
+    else:  # English
+        response = (
+            f"🌾 {crop_title} - Market Price\n"
+            f"💰 Today's Price: ₹{current_price}/quintal\n"
+            f"📈 Trend: {trend_text}\n"
+            f"🏪 Best Mandi: {best_mandi}"
+        )
+    
+    return response
+
 def process_user_message(message: str, sender: str = None, send_menu: bool = True) -> tuple:
     """
     WhatsApp message processing with stateful recommendation flow.
@@ -1164,33 +1236,31 @@ def process_user_message(message: str, sender: str = None, send_menu: bool = Tru
             }
 
         crop = parsed_market["crop"]
-        query_parts = []
-        if parsed_market["state"]:
-            query_parts.append(f"state={quote_plus(parsed_market['state'])}")
-        if parsed_market["district"]:
-            query_parts.append(f"district={quote_plus(parsed_market['district'])}")
-        if parsed_market["market"]:
-            query_parts.append(f"market={quote_plus(parsed_market['market'])}")
-
-        query = "&".join(query_parts)
-        endpoint = f"/api/market-insights/{quote_plus(crop)}"
-        if query:
-            endpoint = f"{endpoint}?{query}"
-
+        
         try:
-            with app.test_client() as client:
-                response = client.get(endpoint)
-                data = response.get_json() or {}
-
-            if response.status_code != 200 or data.get("status") != "success":
-                return (_get_translated_text("market_unavailable", language), True, "main")
-
-            if not data.get("has_market_data"):
-                return (_get_translated_text("no_market_data", language, crop=crop.title()), True, "main")
-
-            return (_format_market_summary(crop, data, language), True, "main")
+            # FIRST: Try to get live prices from agmarket APIs
+            live_records, live_err = fetch_agmarket_live(crop, source="auto")
+            
+            # FALLBACK: If no live data, get historical data
+            time_series, by_mandi, latest_record = _get_local_chart_fallback(crop, days=30)
+            
+            # If we have ANY data, format and return it
+            if live_records or time_series or latest_record:
+                response_text = _format_market_response_for_bot(
+                    crop, 
+                    live_records, 
+                    time_series, 
+                    by_mandi, 
+                    latest_record,
+                    language
+                )
+                return (response_text, True, "main")
+            
+            # If still no data, return friendly message with suggestions
+            return (_get_translated_text("no_market_data", language, crop=crop.title()), True, "main")
+            
         except Exception as e:
-            logger.error(f"Error in WhatsApp market flow: {e}")
+            logger.error(f"Error in WhatsApp market flow for {crop}: {e}")
             return (_get_translated_text("market_unavailable", language), True, "main")
 
     forecast_like = text.startswith("forecast") or intent == "forecast"
@@ -2400,8 +2470,21 @@ def _get_local_chart_fallback(commodity, days=90):
         for _, row in latest_per_mandi.head(15).iterrows()
     ]
     by_mandi.sort(key=lambda x: x["modal_price"], reverse=True)
-    latest_str = latest_date.strftime("%Y-%m-%d") if hasattr(latest_date, "strftime") else str(latest_date)
-    return time_series, by_mandi, latest_str
+    
+    # Build latest_record with price info instead of just date string
+    latest_record = None
+    if not crop_latest.empty:
+        latest_row = crop_latest.iloc[0]
+        latest_record = {
+            "date": latest_date.strftime("%Y-%m-%d") if hasattr(latest_date, "strftime") else str(latest_date),
+            "modal_price": round(float(latest_row.get("modal_price", 0)), 2),
+            "price": round(float(latest_row.get("modal_price", 0)), 2),  # Alias for compatibility
+            "market": latest_row.get("market", "Local Market"),
+            "state": latest_row.get("state", ""),
+            "district": latest_row.get("district", ""),
+        }
+    
+    return time_series, by_mandi, latest_record
 
 
 @app.route('/api/agmarket/history', methods=['GET'])
