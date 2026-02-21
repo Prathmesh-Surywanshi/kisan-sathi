@@ -6,6 +6,7 @@ import Home from './pages/Home';
 import RecommendationPage from './pages/RecommendationPage';
 import ResultsPage from './pages/ResultsPage';
 import MarketInsights from './pages/MarketInsights';
+import GlobalMarketAccess from './pages/GlobalMarketAccess';
 import Navbar from './components/Navbar';
 
 function App() {
@@ -39,6 +40,7 @@ function App() {
           <Route path="/recommend" element={<RecommendationPage crops={crops} />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/market-insights" element={<MarketInsights crops={crops} />} />
+          <Route path="/global-market" element={<GlobalMarketAccess />} />
         </Routes>
       </div>
     </Router>
