@@ -17,10 +17,13 @@ from datetime import datetime, timedelta
 from urllib.parse import quote_plus
 import csv
 from sklearn.ensemble import RandomForestRegressor
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -73,6 +76,314 @@ CROP_TRANSLATION_MAP = {
     "मूंग": "mungbean",
     "उड़द": "blackgram",
     "उडीद": "blackgram"
+}
+
+# STATE TRANSLATION MAP (Hindi & Marathi to English)
+STATE_TRANSLATION_MAP = {
+    # Maharashtra
+    "महाराष्ट्र": "maharashtra",
+    "महाराष्ट्र": "maharashtra",
+    
+    # Andhra Pradesh
+    "आंध्र प्रदेश": "andhra pradesh",
+    "आंधप्रदेश": "andhra pradesh",
+    "अँध्र प्रदेश": "andhra pradesh",
+    
+    # Karnataka
+    "कर्नाटक": "karnataka",
+    "कर्नाटका": "karnataka",
+    
+    # Tamil Nadu
+    "तमिलनाडु": "tamil nadu",
+    "तमिल नाडू": "tamil nadu",
+    "तामिळनाडू": "tamil nadu",
+    
+    # Punjab
+    "पंजाब": "punjab",
+    "पंजाब": "punjab",
+    
+    # Haryana
+    "हरियाणा": "haryana",
+    "हरयाणा": "haryana",
+    
+    # Uttar Pradesh
+    "उत्तर प्रदेश": "uttar pradesh",
+    "उत्तरप्रदेश": "uttar pradesh",
+    "उत्तर प्रदेश": "uttar pradesh",
+    
+    # Rajasthan
+    "राजस्थान": "rajasthan",
+    "राजस्थान": "rajasthan",
+    
+    # Gujarat
+    "गुजरात": "gujarat",
+    "गुजरात": "gujarat",
+    
+    # Madhya Pradesh
+    "मध्य प्रदेश": "madhya pradesh",
+    "मध्यप्रदेश": "madhya pradesh",
+    
+    # West Bengal
+    "पश्चिम बंगाल": "west bengal",
+    "पश्चिमबंगाल": "west bengal",
+    
+    # Jagged entries for Marathi
+    "महाराष्ट्र": "maharashtra",
+    "तामिळनाडू": "tamil nadu",
+    "कर्नाटक": "karnataka",
+    "गुजरात": "gujarat",
+    "राजस्थान": "rajasthan",
+    "हरयाणा": "haryana",
+    "पंजाब": "punjab",
+    "उत्तर प्रदेश": "uttar pradesh",
+    "मध्य प्रदेश": "madhya pradesh",
+}
+
+# DISTRICT TRANSLATION MAP (Hindi & Marathi to English)  
+DISTRICT_TRANSLATION_MAP = {
+    # Maharashtra
+    "पुणे": "pune",
+    "मुंबई": "mumbai",
+    "नगर": "nagpur",
+    "नागपूर": "nagpur",
+    "अहमदनगर": "ahmadnagar",
+    "औरंगाबाद": "aurangabad",
+    "ठाणे": "thane",
+    "सतारा": "satara",
+    "कोल्हापुर": "kolhapur",
+    "सांगली": "sangli",
+    "सोलापूर": "solapur",
+    "विदर्भ": "vidarbha",
+    "अमरावती": "amravati",
+    "वर्धा": "wardha",
+    "बुलढाणा": "buldhana",
+    "यवतमाळ": "yavatmal",
+    "वाशिम": "washim",
+    "नाँद": "nanded",
+    "परभणी": "parbhani",
+    "हिंगोली": "hingoli",
+    "जालना": "jalna",
+    "लातूर": "latur",
+    "उस्मानाबाद": "osmanabd", 
+    "अकोला": "akola",
+    "धुळे": "dhule",
+    "नंदुरबार": "nandurbar",
+    "जळगांव": "jalgaon",
+    "अमळनेर": "amalner",
+    "बीड": "beed",
+    
+    # Andhra Pradesh
+    "विजयवाड": "vijayawada",
+    "गुंटूर": "guntur",
+    "कृष्णा": "krishna",
+    "प्रकाशम": "prakasam",
+    "नेल्लोर": "nellore",
+    "चित्तूर": "chittoor",
+    
+    # Karnataka
+    "बेंगलोर": "bangalore",
+    "मैसूर": "mysore",
+    "बेलारी": "bellary",
+    "कोलार": "kolar",
+    "तुमकूर": "tumkur",
+    "कोडागु": "kodagu",
+    
+    # Tamil Nadu  
+    "चेन्नई": "chennai",
+    "कोयंबटोर": "coimbatore",
+    "मदुरै": "madurai",
+    "तिरुनेलवेली": "tirunelveli",
+    "कन्याकुमारी": "kanyakumari",
+    "तंजावूर": "thanjavur",
+    
+    # Punjab
+    "अमृतसर": "amritsar",
+    "लुधियाना": "ludhiana",
+    "जालंधर": "jalandhar",
+    "मोहाली": "mohali",
+    "फिरोजपुर": "firozpur",
+    "बठिंडा": "bathinda",
+    "संगरूर": "sangrur",
+    "पटियाला": "patiala",
+    
+    # Rajasthan
+    "जयपुर": "jaipur",
+    "जोधपुर": "jodhpur",
+    "अजमेर": "ajmer",
+    "बीकानेर": "bikaner",
+    "कोटा": "kota",
+    "भीलवाड़ा": "bhilwara",
+    "चितौड़गढ़": "chittorgarh",
+    "दौसा": "dausa",
+    
+    # Gujarat
+    "अहमदाबाद": "ahmedabad",
+    "वडोदरा": "vadodara",
+    "राजकोट": "rajkot",
+    "सूरत": "surat",
+    "भाविनगर": "bhavnagar",
+    "जूनागढ़": "junagadh",
+    "पोरबंदर": "porbandar",
+    
+    # Uttar Pradesh
+    "लखनऊ": "lucknow",
+    "मेरठ": "meerut",
+    "कानपुर": "kanpur",
+    "आगरा": "agra",
+    "वाराणसी": "varanasi",
+    "इलाहाबाद": "allahabad",
+    "आजमगढ़": "azamgarh",
+    "गोरखपुर": "gorakhpur",
+    
+    # Haryana
+    "फरीदाबाद": "faridabad",
+    "करनाल": "karnal",
+    "हिसार": "hisar",
+    "भिवानी": "bhiwani",
+    "पानीपत": "panipat",
+}
+
+def _translate_location_to_english(state: str, district: str = "") -> tuple:
+    """Translate location names from Hindi/Marathi to English"""
+    state_normalized = normalize_text(state)
+    
+    # Check direct mapping first
+    english_state = STATE_TRANSLATION_MAP.get(state, state_normalized)
+    if english_state in STATE_TRANSLATION_MAP.values():
+        pass  # Already in English form
+    else:
+        # Try to find by normalized key
+        for hindi_key, english_val in STATE_TRANSLATION_MAP.items():
+            if normalize_text(hindi_key) == state_normalized:
+                english_state = english_val
+                break
+    
+    english_district = district
+    if district:
+        district_normalized = normalize_text(district)
+        english_district = DISTRICT_TRANSLATION_MAP.get(district, district_normalized)
+        if english_district not in DISTRICT_TRANSLATION_MAP.values():
+            # Try to find by normalized key
+            for hindi_key, english_val in DISTRICT_TRANSLATION_MAP.items():
+                if normalize_text(hindi_key) == district_normalized:
+                    english_district = english_val
+                    break
+    
+    return english_state, english_district
+
+
+# COMPREHENSIVE LANGUAGE TRANSLATIONS
+TRANSLATIONS = {
+    "first_greeting": {
+        "en": "नमस्ते / नमस्कार / Hello 👋\n\nChoose your preferred language:",
+        "hi": "नमस्ते 👋\n\nअपनी पसंदीदा भाषा चुनें:",
+        "mr": "नमस्ते 👋\n\nअपनी आवडत्या भाषेचा निवडा:"
+    },
+    "language_set": {
+        "en": "Language set to {lang}\n\n🌾 Welcome to KISAN - Your Crop Companion!\n\nChoose what you need:\n🌾 Recommend - Get crop recommendation\n📊 Market - Check market prices\n📅 Season - See seasonal crops",
+        "hi": "भाषा {lang} पर सेट की गई\n\n🌾 KISAN में आपका स्वागत है!\n\nक्या चाहते हैं:\n🌾 सिफारिश - फसल की सिफारिश\n📊 बाजार - बाजार भाव देखें\n📅 मौसम - मौसमी फसलें देखें",
+        "mr": "भाषा {lang} सेट केली\n\n🌾 KISAN मध्ये आपले स्वागत आहे!\n\nकाय हवेय:\n🌾 शिफारस - पिके शिफारस\n📊 बाजार - बाजार भाव पहा\n📅 ऋतु - ऋतु पिके पहा"
+    },
+    "welcome": {
+        "en": "🌾 Welcome to KISAN!\n\nChoose an option:\n🌾 Recommend\n📊 Market\n📅 Season",
+        "hi": "🌾 KISAN में आपका स्वागत है!\n\nएक विकल्प चुनें:\n🌾 सिफारिश\n📊 बाजार\n📅 मौसम",
+        "mr": "🌾 KISAN मध्ये आपले स्वागत आहे!\n\nएक पर्याय निवडा:\n🌾 शिफारस\n📊 बाजार\n📅 ऋतु"
+    },
+    "help": {
+        "en": "📘 Commands:\n- recommend\n- market <crop>\n- forecast <crop>\n- season <rainy|summer|winter|spring>\n\nExample:\nmarket rice\nforecast rice\nseason rainy",
+        "hi": "📘 आदेश:\n- सिफारिश\n- बाजार <फसल>\n- पूर्वानुमान <फसल>\n- मौसम <बरसात|गर्मी|सर्दी|वसंत>\n\nउदाहरण:\nबाजार चावल\nपूर्वानुमान चावल\nमौसम बरसात",
+        "mr": "📘 आदेश:\n- शिफारस\n- बाजार <पिक>\n- पूर्वानुमान <पिक>\n- ऋतु <पावसाळी|उन्हाळी|हिवाळी|वसंत>\n\nउदाहरण:\nबाजार तांदूळ\nपूर्वानुमान तांदूळ\nऋतु पावसाळी"
+    },
+    "main_menu": {
+        "en": "🏠 Main Menu",
+        "hi": "🏠 मुख्य मेनू",
+        "mr": "🏠 मुख्य मेनू"
+    },
+    "location_help": {
+        "en": "📍 Location Format:\nState | District\n\nExample:\nMaharashtra | Pune\nPunjab | Amritsar\nTamil Nadu | Chennai",
+        "hi": "📍 स्थान प्रारूप:\nराज्य | जिला\n\nउदाहरण:\nमहाराष्ट्र | पुणे\nपंजाब | अमृतसर\nतमिलनाडु | चेन्नई",
+        "mr": "📍 स्थान प्रारूप:\nराज्य | जिल्हा\n\nउदाहरण:\nमहाराष्ट्र | पुणे\nपंजाब | अमृतसर\nतमिळनाडू | चेन्नई"
+    },
+    "recommend_prompt": {
+        "en": "🌾 Please send your location:\n\nState | District\n\nExample:\nMaharashtra | Pune",
+        "hi": "🌾 कृपया अपना स्थान भेजें:\n\nराज्य | जिला\n\nउदाहरण:\nमहाराष्ट्र | पुणे",
+        "mr": "🌾 कृपया आपले स्थान पाठवा:\n\nराज्य | जिल्हा\n\nउदाहरण:\nमहाराष्ट्र | पुणे"
+    },
+    "invalid_location": {
+        "en": "⚠ Invalid format.\n\nPlease send:\nState | District\n\nExample: Maharashtra | Pune",
+        "hi": "⚠ अमान्य प्रारूप।\n\nकृपया भेजें:\nराज्य | जिला\n\nउदाहरण: महाराष्ट्र | पुणे",
+        "mr": "⚠ अमान्य प्रारूप।\n\nकृपया पाठवा:\nराज्य | जिल्हा\n\nउदाहरण: महाराष्ट्र | पुणे"
+    },
+    "recommendation_result": {
+        "en": "📍 Location: {state}, {district}\n🌾 Recommended: {crop}\n✅ Confidence: {confidence}%\n\n🌦 Climate: {temp}°C, {humidity}% humidity\n🧪 Rainfall: {rainfall}mm\n\nTop Suggestions:\n{top_crops}",
+        "hi": "📍 स्थान: {state}, {district}\n🌾 अनुशंसित: {crop}\n✅ आत्मविश्वास: {confidence}%\n\n🌦 जलवायु: {temp}°C, {humidity}% आर्द्रता\n🧪 वर्षा: {rainfall}मिमी\n\nशीर्ष सुझाव:\n{top_crops}",
+        "mr": "📍 स्थान: {state}, {district}\n🌾 शिफारस: {crop}\n✅ विश्वास: {confidence}%\n\n🌦 हवामान: {temp}°C, {humidity}% आर्द्रता\n🧪 पाऊस: {rainfall}मिमी\n\nशीर्ष सूचना:\n{top_crops}"
+    },
+    "service_unavailable": {
+        "en": "⚠ Recommendation service unavailable. Try again soon.",
+        "hi": "⚠ सिफारिश सेवा अनुपलब्ध है। जल्द ही फिर से कोशिश करें।",
+        "mr": "⚠ शिफारस सेवा उपलब्ध नाही। लवकरच पुन्हा प्रयत्न करा।"
+    },
+    "market_crop_needed": {
+        "en": "Please provide crop name.\nExample: market rice",
+        "hi": "कृपया फसल का नाम प्रदान करें।\nउदाहरण: बाजार चावल",
+        "mr": "कृपया पिकाचे नाव द्या।\nउदाहरण: बाजार तांदूळ"
+    },
+    "market_unavailable": {
+        "en": "⚠ Unable to fetch market insights. Try again.",
+        "hi": "⚠ बाजार जानकारी प्राप्त नहीं कर सकते। फिर से कोशिश करें।",
+        "mr": "⚠ बाजार माहिती मिळू शकत नाही। पुन्हा प्रयत्न करा।"
+    },
+    "no_market_data": {
+        "en": "No market data for {crop}.",
+        "hi": "{crop} के लिए कोई बाजार डेटा नहीं।",
+        "mr": "{crop} साठी कोणतेही बाजार डेटा नाही।"
+    },
+    "forecast_crop_needed": {
+        "en": "Please provide crop name.\nExample: forecast rice",
+        "hi": "कृपया फसल का नाम प्रदान करें।\nउदाहरण: पूर्वानुमान चावल",
+        "mr": "कृपया पिकाचे नाव द्या।\nउदाहरण: पूर्वानुमान तांदूळ"
+    },
+    "no_forecast_data": {
+        "en": "No forecast data for {crop}.",
+        "hi": "{crop} के लिए कोई पूर्वानुमान डेटा नहीं।",
+        "mr": "{crop} साठी कोणतेही पूर्वानुमान डेटा नाही।"
+    },
+    "season_needed": {
+        "en": "Please provide season.\nExample: season rainy",
+        "hi": "कृपया मौसम प्रदान करें।\nउदाहरण: मौसम बरसात",
+        "mr": "कृपया ऋतु द्या।\nउदाहरण: ऋतु पावसाळी"
+    },
+    "invalid_season": {
+        "en": "Invalid season. Use: rainy, summer, winter, spring.",
+        "hi": "अमान्य मौसम। उपयोग करें: बरसात, गर्मी, सर्दी, वसंत।",
+        "mr": "अमान्य ऋतु। वापरा: पावसाळी, उन्हाळी, हिवाळी, वसंत।"
+    },
+    "season_unavailable": {
+        "en": "⚠ Unable to fetch seasonal recommendations.",
+        "hi": "⚠ मौसमी सिफारिशें प्राप्त नहीं कर सकते।",
+        "mr": "⚠ ऋतु शिफारसी मिळू शकत नाही।"
+    },
+    "no_season_data": {
+        "en": "No crops for {season} season.",
+        "hi": "{season} मौसम के लिए कोई फसलें नहीं।",
+        "mr": "{season} ऋतु साठी कोणत्या पिके नाही।"
+    },
+    "season_result": {
+        "en": "📅 {season_title} Season\nTop crops:\n{crops}\n\nWhy: {reason}",
+        "hi": "📅 {season_title} मौसम\nशीर्ष फसलें:\n{crops}\n\nक्यों: {reason}",
+        "mr": "📅 {season_title} ऋतु\nशीर्ष पिके:\n{crops}\n\nका: {reason}"
+    },
+    "not_understood": {
+        "en": "I did not understand. Type 'help'.",
+        "hi": "मुझे समझ नहीं आया। 'मदद' टाइप करें।",
+        "mr": "मला समजले नाही। 'मदद' टाइप करा।"
+    },
+    "help_needed": {
+        "en": "Please provide crop name. Example: market rice",
+        "hi": "कृपया फसल का नाम प्रदान करें। उदाहरण: बाजार चावल",
+        "mr": "कृपया पिकाचे नाव द्या। उदाहरण: बाजार तांदूळ"
+    }
 }
 
 # WhatsApp Cloud API config (set these as environment variables)
@@ -252,36 +563,119 @@ def _detect_intent(text: str):
         return "recommend"
     return "unknown"
 
-def send_whatsapp_menu(to: str) -> bool:
+def send_whatsapp_menu(to: str, menu_type: str = "main") -> bool:
+    """Send interactive button menu. menu_type: 'main', 'language', 'location'"""
     if not WHATSAPP_ACCESS_TOKEN or not GRAPH_API_URL:
         return False
+
+    # Get user's language preference from session
+    session = _get_user_session(to)
+    language = session.get("language", "en")
 
     headers = {
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": "Choose an option"},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": "recommend", "title": "🌾 Recommend"}},
-                    {"type": "reply", "reply": {"id": "market", "title": "📊 Market"}},
-                    {"type": "reply", "reply": {"id": "season", "title": "📅 Season"}}
-                ]
+
+    if menu_type == "language":
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": "तुमची भाषा निवडा / अपनी भाषा चुनें / Choose your language"},
+                "action": {
+                    "buttons": [
+                        {"type": "reply", "reply": {"id": "lang_en", "title": "🇺🇸 English"}},
+                        {"type": "reply", "reply": {"id": "lang_hi", "title": "🇮🇳 हिंदी"}},
+                        {"type": "reply", "reply": {"id": "lang_mr", "title": "🇮🇳 मराठी"}}
+                    ]
+                }
             }
         }
-    }
+    elif menu_type == "location":
+        if language == "hi":
+            body_text = "📍 अपना स्थान भेजें:\nRajasthan | Jaipur\n\nउदाहरण: महाराष्ट्र | पुणे"
+            button1_title = "📍 प्रारूप सहायता"
+            button2_title = "🏠 मुख्य मेनू"
+        elif language == "mr":
+            body_text = "📍 आपलं स्थान पाठवा:\nRajasthan | Jaipur\n\nउदाहरण: महाराष्ट्र | पुणे"
+            button1_title = "📍 फॉर्मॅट मदत"
+            button2_title = "🏠 मुख्य मेनू"
+        else:
+            body_text = "📍 Send your location:\nState | District\n\nExample: Maharashtra | Pune"
+            button1_title = "📍 Format Help"
+            button2_title = "🏠 Main Menu"
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": body_text},
+                "action": {
+                    "buttons": [
+                        {"type": "reply", "reply": {"id": "location_help", "title": button1_title}},
+                        {"type": "reply", "reply": {"id": "main_menu", "title": button2_title}}
+                    ]
+                }
+            }
+        }
+    else:  # main menu
+        if language == "hi":
+            body_text = "🌾 कृषि सहायता\n\nक्या चाहते हैं:"
+            button1_title = "🌾 सिफारिश"
+            button2_title = "📊 बाजार"
+            button3_title = "📅 मौसम"
+        elif language == "mr":
+            body_text = "🌾 कृषि मदत\n\nकाय हवेय:"
+            button1_title = "🌾 शिफारस"
+            button2_title = "📊 बाजार"
+            button3_title = "📅 ऋतु"
+        else:
+            body_text = "🌾 Agriculture Help\n\nChoose what you need:"
+            button1_title = "🌾 Recommend"
+            button2_title = "📊 Market"
+            button3_title = "📅 Season"
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": body_text},
+                "action": {
+                    "buttons": [
+                        {"type": "reply", "reply": {"id": "recommend", "title": button1_title}},
+                        {"type": "reply", "reply": {"id": "market", "title": button2_title}},
+                        {"type": "reply", "reply": {"id": "season", "title": button3_title}}
+                    ]
+                }
+            }
+        }
 
     try:
         response = requests.post(GRAPH_API_URL, headers=headers, json=payload, timeout=15)
         return response.ok
     except requests.RequestException:
         return False
+
+def _get_translated_text(key: str, language: str = "en", **kwargs) -> str:
+    """Get translated text for a given key and language"""
+    if key not in TRANSLATIONS:
+        return key
+    
+    lang_key = language if language in {"en", "hi", "mr"} else "en"
+    text = TRANSLATIONS[key].get(lang_key, TRANSLATIONS[key].get("en", key))
+    
+    # Replace any placeholders with provided kwargs
+    try:
+        return text.format(**kwargs)
+    except KeyError:
+        return text
 
 def _normalize_crop_label_from_column(column_name: str):
     base = column_name.replace("_production_(1000_tons)", "")
@@ -577,87 +971,127 @@ def _best_selling_window(trend: str):
         return "Monitor next 20-30 days"
     return "Sell within 7-10 days"
 
-def _format_market_summary(crop: str, data: dict):
+def _format_market_summary(crop: str, data: dict, language: str = "en"):
     market_data = data.get("market_data", {})
     latest = market_data.get("latest_price", {})
     risk_assessment = data.get("risk_assessment", {})
     trend = market_data.get("demand_trend", "N/A")
     selling_window = _best_selling_window(trend)
 
-    return (
-        f"📊 {crop.title()} Market Summary\n"
-        f"💰 Price: ₹{latest.get('value', 'N/A')}\n"
-        f"📈 Trend: {trend}\n"
-        f"⚠ Risk: {risk_assessment.get('market_risk', 'N/A').title()}\n"
-        f"📅 Best selling window: {selling_window}"
-    )
+    if language == "hi":
+        return (
+            f"📊 {crop.title()} बाजार सारांश\n"
+            f"💰 कीमत: ₹{latest.get('value', 'N/A')}\n"
+            f"📈 प्रवृत्ति: {trend}\n"
+            f"⚠ जोखिम: {risk_assessment.get('market_risk', 'N/A').title()}\n"
+            f"📅 सर्वोत्तम विक्रय विंडो: {selling_window}"
+        )
+    elif language == "mr":
+        return (
+            f"📊 {crop.title()} बाजार सारांश\n"
+            f"💰 किंमत: ₹{latest.get('value', 'N/A')}\n"
+            f"📈 ट्रेंड: {trend}\n"
+            f"⚠ जोखीम: {risk_assessment.get('market_risk', 'N/A').title()}\n"
+            f"📅 सर्वोत्तम विक्रय विंडो: {selling_window}"
+        )
+    else:
+        return (
+            f"📊 {crop.title()} Market Summary\n"
+            f"💰 Price: ₹{latest.get('value', 'N/A')}\n"
+            f"📈 Trend: {trend}\n"
+            f"⚠ Risk: {risk_assessment.get('market_risk', 'N/A').title()}\n"
+            f"📅 Best selling window: {selling_window}"
+        )
 
-def _format_forecast_summary(crop: str, data: dict):
+def _format_forecast_summary(crop: str, data: dict, language: str = "en"):
     forecast = data.get("market_data", {}).get("forecast_30d", {})
     trend = data.get("market_data", {}).get("demand_trend", "N/A")
 
-    return (
-        f"📈 30-Day Forecast for {crop.title()}\n"
-        f"Avg: ₹{forecast.get('avg', 'N/A')}\n"
-        f"Min: ₹{forecast.get('min', 'N/A')}\n"
-        f"Max: ₹{forecast.get('max', 'N/A')}\n"
-        f"Trend: {trend}"
-    )
+    if language == "hi":
+        return (
+            f"📈 {crop.title()} के लिए 30 दिन का पूर्वानुमान\n"
+            f"औसत: ₹{forecast.get('avg', 'N/A')}\n"
+            f"न्यूनतम: ₹{forecast.get('min', 'N/A')}\n"
+            f"अधिकतम: ₹{forecast.get('max', 'N/A')}\n"
+            f"प्रवृत्ति: {trend}"
+        )
+    elif language == "mr":
+        return (
+            f"📈 {crop.title()} साठी 30 दिवसांचा अंदाज\n"
+            f"सरासरी: ₹{forecast.get('avg', 'N/A')}\n"
+            f"किमान: ₹{forecast.get('min', 'N/A')}\n"
+            f"कमाल: ₹{forecast.get('max', 'N/A')}\n"
+            f"ट्रेंड: {trend}"
+        )
+    else:
+        return (
+            f"📈 30-Day Forecast for {crop.title()}\n"
+            f"Avg: ₹{forecast.get('avg', 'N/A')}\n"
+            f"Min: ₹{forecast.get('min', 'N/A')}\n"
+            f"Max: ₹{forecast.get('max', 'N/A')}\n"
+            f"Trend: {trend}"
+        )
 
-def process_user_message(message: str, sender: str = None) -> str:
-    """WhatsApp message processing with stateful recommendation flow."""
+def process_user_message(message: str, sender: str = None, send_menu: bool = True) -> tuple:
+    """
+    WhatsApp message processing with stateful recommendation flow.
+    Returns: (response_text, should_send_menu, menu_type)
+    """
     if not message:
-        return "Please send a message. Type 'help' for options."
+        return (_get_translated_text("help_needed", "en"), True, "main")
 
     text = _normalize_farmer_text(message)
     session = _get_user_session(sender or "unknown")
+    language = session.get("language", "en")
     intent = _detect_intent(text)
+
+    # Language selection flow
+    if text in {"lang_en", "lang_hi", "lang_mr"}:
+        lang_map = {"lang_en": "en", "lang_hi": "HI", "lang_mr": "MR"}
+        session["language"] = lang_map[text].lower()
+        session["step"] = None
+        language = session["language"]
+        response = _get_translated_text("language_set", language, lang=lang_map[text])
+        return (response, True, "main")
+
+    # First message - ask for language
+    if text in {"hi", "hello", "hey", "hii"} or intent == "unknown" and session.get("step") is None:
+        if "language" not in session:
+            return (_get_translated_text("first_greeting", "en"), True, "language")
+        session["step"] = None
 
     if text in {"hi", "hello", "hey", "hii"}:
         session["step"] = None
-        return (
-            "🌾 Welcome to KISAN!\n\n"
-            "Send:\n"
-            "1️⃣ recommend\n"
-            "2️⃣ market <crop> (example: market rice)\n"
-            "3️⃣ forecast <crop>\n"
-            "4️⃣ season <rainy|summer|winter|spring>\n"
-            "5️⃣ help"
-        )
+        response = _get_translated_text("welcome", language)
+        return (response, True, "main")
 
     if text == "help":
-        return (
-            "📘 Commands:\n"
-            "- recommend\n"
-            "- market <crop>\n"
-            "- market <crop> | <state> | <district> | <market>\n"
-            "- forecast <crop>\n"
-            "- season <rainy|summer|winter|spring>\n"
-            "\nExample:\n"
-            "recommend\n"
-            "Maharashtra | Pune\n\n"
-            "market rice\n"
-            "market rice | maharashtra | pune | pune market\n"
-            "forecast rice\n"
-            "season rainy"
-        )
+        return (_get_translated_text("help", language), False, "main")
+
+    if text in {"menu", "main_menu"}:
+        return (_get_translated_text("main_menu", language), True, "main")
+
+    if text == "location_help":
+        return (_get_translated_text("location_help", language), True, "location")
 
     if text == "recommend" or intent == "recommend":
         session["step"] = "awaiting_location"
-        return (
-            "🌾 Please send your location in this format:\n"
-            "State | District\n\n"
-            "Example:\n"
-            "Maharashtra | Pune"
-        )
+        return (_get_translated_text("recommend_prompt", language), True, "location")
 
     if session.get("step") == "awaiting_location":
         location = _parse_location_input(message)
         if not location:
-            return "Invalid format. Please send: State | District (example: Maharashtra | Pune)"
+            return (_get_translated_text("invalid_location", language), True, "location")
 
         try:
-            location_result = _run_location_recommendation_logic(location["state"], location["district"])
+            # Translate location names from Hindi/Marathi to English for database queries
+            english_state, english_district = _translate_location_to_english(
+                location["state"], 
+                location["district"]
+            )
+            
+            # Use English names for database queries, but keep original for display
+            location_result = _run_location_recommendation_logic(english_state, english_district)
             recommendation = location_result["recommendation"]
             soil_data = location_result["soil_data"]
             weather_data = location_result["weather_data"]
@@ -670,23 +1104,28 @@ def process_user_message(message: str, sender: str = None) -> str:
             )
 
             session["step"] = None
-            return (
-                f"📍 Location: {location['state']}, {location['district']}\n"
-                f"🌾 Recommended Crop: {top_crop}\n"
-                f"✅ Confidence: {confidence}%\n\n"
-                f"🌦 Estimated Climate: {weather_data['temperature']}°C, {weather_data['humidity']}% humidity, {weather_data['rainfall']} mm rainfall\n"
-                f"🧪 Soil Profile Source Crop: {soil_data.get('dominant_crop_profile') or 'general'}\n\n"
-                f"Top Suggestions:\n{top_lines}"
+            response = _get_translated_text(
+                "recommendation_result",
+                language,
+                state=location['state'],  # Display original input
+                district=location['district'],  # Display original input
+                crop=top_crop,
+                confidence=confidence,
+                temp=weather_data['temperature'],
+                humidity=weather_data['humidity'],
+                rainfall=weather_data['rainfall'],
+                top_crops=top_lines
             )
+            return (response, True, "main")
         except ValueError as e:
             logger.warning(f"Invalid location recommendation input: {e}")
-            return f"⚠ {e}. Please send: State | District"
+            return (_get_translated_text("invalid_location", language), True, "location")
         except RuntimeError as e:
             logger.error(f"Location-based recommendation unavailable: {e}")
-            return "⚠ Recommendation service is not ready right now. Please try again soon."
+            return (_get_translated_text("service_unavailable", language), True, "main")
         except Exception as e:
             logger.error(f"Error in WhatsApp recommendation flow: {e}")
-            return "⚠ Unable to process recommendation currently. Please try again later."
+            return (_get_translated_text("service_unavailable", language), True, "main")
 
     market_like = text.startswith("market") or intent == "market"
     if market_like:
@@ -694,7 +1133,7 @@ def process_user_message(message: str, sender: str = None) -> str:
         if not parsed_market:
             crop = _extract_crop_from_text(text)
             if not crop:
-                return "Please provide crop name. Example: market rice"
+                return (_get_translated_text("market_crop_needed", language), False, "main")
             parsed_market = {
                 "crop": crop,
                 "state": None,
@@ -722,21 +1161,21 @@ def process_user_message(message: str, sender: str = None) -> str:
                 data = response.get_json() or {}
 
             if response.status_code != 200 or data.get("status") != "success":
-                return "⚠ Unable to fetch market insights right now. Please try again."
+                return (_get_translated_text("market_unavailable", language), True, "main")
 
             if not data.get("has_market_data"):
-                return f"No market data found for {crop.title()}."
+                return (_get_translated_text("no_market_data", language, crop=crop.title()), True, "main")
 
-            return _format_market_summary(crop, data)
+            return (_format_market_summary(crop, data, language), True, "main")
         except Exception as e:
             logger.error(f"Error in WhatsApp market flow: {e}")
-            return "⚠ Unable to process market query currently. Please try again later."
+            return (_get_translated_text("market_unavailable", language), True, "main")
 
     forecast_like = text.startswith("forecast") or intent == "forecast"
     if forecast_like:
         crop = text.split(maxsplit=1)[1].strip() if text.startswith("forecast") and len(text.split(maxsplit=1)) > 1 else _extract_crop_from_text(text)
         if not crop:
-            return "Please provide crop name. Example: forecast rice"
+            return (_get_translated_text("forecast_crop_needed", language), False, "main")
 
         try:
             with app.test_client() as client:
@@ -744,22 +1183,22 @@ def process_user_message(message: str, sender: str = None) -> str:
                 data = response.get_json() or {}
 
             if response.status_code != 200 or data.get("status") != "success" or not data.get("has_market_data"):
-                return f"No forecast data found for {crop.title()}."
+                return (_get_translated_text("no_forecast_data", language, crop=crop.title()), True, "main")
 
-            return _format_forecast_summary(crop, data)
+            return (_format_forecast_summary(crop, data, language), True, "main")
         except Exception as e:
             logger.error(f"Error in WhatsApp forecast flow: {e}")
-            return "⚠ Unable to process forecast query right now."
+            return (_get_translated_text("market_unavailable", language), True, "main")
 
     season_like = text.startswith("season") or intent == "season"
     if season_like:
         season = text.split(maxsplit=1)[1].strip() if text.startswith("season") and len(text.split(maxsplit=1)) > 1 else _extract_season_from_text(text)
         if not season:
-            return "Please provide season. Example: season rainy"
+            return (_get_translated_text("season_needed", language), False, "main")
 
         season = normalize_text(season)
         if season not in SUPPORTED_SEASONS:
-            return "Invalid season. Use rainy, summer, winter, or spring."
+            return (_get_translated_text("invalid_season", language), False, "main")
 
         try:
             with app.test_client() as client:
@@ -767,23 +1206,26 @@ def process_user_message(message: str, sender: str = None) -> str:
                 data = response.get_json() or {}
 
             if response.status_code != 200 or data.get("status") != "success":
-                return "⚠ Unable to fetch seasonal recommendations right now."
+                return (_get_translated_text("season_unavailable", language), True, "main")
 
             crops = data.get("recommended_crops", [])[:5]
             if not crops:
-                return f"No crops found for {season} season."
+                return (_get_translated_text("no_season_data", language, season=season.title()), True, "main")
 
             crops_text = "\n".join([f"- {crop}" for crop in crops])
-            return (
-                f"📅 Seasonal Recommendation ({season.title()})\n"
-                f"Top crops:\n{crops_text}\n\n"
-                f"Why: {data.get('reason', 'Based on market records')}"
+            response_text = _get_translated_text(
+                "season_result",
+                language,
+                season_title=season.title(),
+                crops=crops_text,
+                reason=data.get('reason', 'Based on market records')
             )
+            return (response_text, True, "main")
         except Exception as e:
             logger.error(f"Error in WhatsApp season flow: {e}")
-            return "⚠ Unable to process season query right now."
+            return (_get_translated_text("season_unavailable", language), True, "main")
 
-    return "I did not understand. Type 'help'."
+    return (_get_translated_text("not_understood", language), True, "main")
 
 @app.route('/webhook', methods=['GET'])
 def verify_webhook():
@@ -799,7 +1241,7 @@ def verify_webhook():
 
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
-    """Receive WhatsApp webhook events and auto-reply"""
+    """Receive WhatsApp webhook events and auto-reply with smart menu handling"""
     data = request.json or {}
     logger.info(f"Incoming WhatsApp webhook: {json.dumps(data)[:500]}")
 
@@ -812,6 +1254,8 @@ def whatsapp_webhook():
                 for msg in messages:
                     sender = msg.get("from")
                     text_body = msg.get("text", {}).get("body", "")
+                    
+                    # Extract button or list replies
                     if not text_body and msg.get("interactive"):
                         interactive = msg.get("interactive", {})
                         if interactive.get("button_reply"):
@@ -820,13 +1264,18 @@ def whatsapp_webhook():
                             text_body = interactive.get("list_reply", {}).get("id", "")
 
                     if sender and text_body:
-                        reply_text = process_user_message(text_body, sender=sender)
+                        # Process message and get response + menu guidance
+                        reply_text, should_send_menu, menu_type = process_user_message(text_body, sender=sender)
+                        
+                        # Send main text response
                         send_whatsapp_message(sender, reply_text)
+                        
+                        # Log interaction
                         _log_chat_interaction(sender, text_body, reply_text, intent=_detect_intent(_normalize_farmer_text(text_body)))
-
-                        normalized = _normalize_farmer_text(text_body)
-                        if normalized in {"hi", "hello", "hey", "hii", "help", "menu"}:
-                            send_whatsapp_menu(sender)
+                        
+                        # Always send menu after command completes for better UX
+                        if should_send_menu:
+                            send_whatsapp_menu(sender, menu_type=menu_type)
     except Exception as e:
         logger.error(f"Error processing WhatsApp webhook: {e}")
 
@@ -987,7 +1436,11 @@ def get_soil_data():
     try:
         state = request.args.get('state', '').strip()
         district = request.args.get('district', '').strip()
-        soil_params = _resolve_soil_parameters(state, district)
+        
+        # Translate location names from Hindi/Marathi to English if needed
+        english_state, english_district = _translate_location_to_english(state, district)
+        
+        soil_params = _resolve_soil_parameters(english_state, english_district)
         
         return jsonify({
             "status": "success",
@@ -1008,7 +1461,11 @@ def get_weather_data():
     try:
         state = request.args.get('state', '').strip()
         district = request.args.get('district', '').strip()
-        weather = _resolve_weather_data(state, district)
+        
+        # Translate location names from Hindi/Marathi to English if needed
+        english_state, english_district = _translate_location_to_english(state, district)
+        
+        weather = _resolve_weather_data(english_state, english_district)
 
         return jsonify({
             "status": "success",
@@ -1036,7 +1493,10 @@ def recommend_by_location():
         if not district:
             return jsonify({"status": "error", "message": "District is required"}), 400
 
-        result = _run_location_recommendation_logic(state, district)
+        # Translate location names from Hindi/Marathi to English if needed
+        english_state, english_district = _translate_location_to_english(state, district)
+        
+        result = _run_location_recommendation_logic(english_state, english_district)
         return jsonify(result)
     except ValueError as e:
         return jsonify({"status": "error", "message": str(e)}), 400
@@ -1445,6 +1905,7 @@ def internal_error(error):
 if __name__ == '__main__':
     # Load models on startup
     if load_models():
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        flask_debug = os.getenv("FLASK_DEBUG", "false").strip().lower() == "true"
+        app.run(debug=flask_debug, host='0.0.0.0', port=5000, use_reloader=False)
     else:
         logger.error("Failed to load models. Exiting...")
