@@ -139,6 +139,18 @@ def load_models():
         logger.error(f"Error loading models: {e}")
         return False
 
+# Initialize models on module import
+def _initialize_app():
+    """Initialize app on import"""
+    global market_prices
+    if market_prices is None:
+        logger.info("Initializing models on module import...")
+        if not load_models():
+            logger.error("Failed to initialize models on import")
+
+# Call initialization after load_models is defined
+_initialize_app()
+
 def normalize_text(value: str) -> str:
     if value is None:
         return ""
@@ -182,24 +194,71 @@ def apply_season_filter(df: pd.DataFrame, season: str = None):
     filtered = df[df["month"].isin(SEASON_MONTHS[season_key])].copy()
     return filtered, True
 
+def classify_trend_90day(df: pd.DataFrame) -> dict:
+    """Classify trend using 90 days of data with improved statistical methods"""
+    if df.shape[0] < 20:
+        return {"trend": "stable", "strength": 0, "confidence": 0.3}
+    
+    df_sorted = df.sort_values("price_date").copy()
+    prices = df_sorted["modal_price"].values
+    
+    # Split 90-day data into three 30-day periods for better analysis
+    n = len(prices)
+    period_size = max(1, n // 3)
+    
+    early_period = prices[:period_size]
+    late_period = prices[-period_size:]
+    
+    early_avg = float(np.mean(early_period)) if len(early_period) > 0 else 0
+    late_avg = float(np.mean(late_period)) if len(late_period) > 0 else 0
+    mid_period = prices[period_size:2*period_size]
+    mid_avg = float(np.mean(mid_period)) if len(mid_period) > 0 else 0
+    
+    # Calculate price change across 90 days
+    if early_avg > 0:
+        price_change_pct = ((late_avg - early_avg) / early_avg) * 100
+    else:
+        price_change_pct = 0
+    
+    # Linear regression for trend strength
+    x = np.arange(len(prices))
+    coefficients = np.polyfit(x, prices, 1)
+    slope = coefficients[0]
+    mean_price = np.mean(prices)
+    
+    if mean_price > 0:
+        normalized_slope = (slope / mean_price) * 100
+    else:
+        normalized_slope = 0
+    
+    # Determine trend with improved thresholds based on 90-day data
+    trend = "stable"
+    strength = 0
+    confidence = min(0.95, 0.5 + (len(prices) / 90.0) * 0.45)
+    
+    if normalized_slope > 0.15:  # Improved threshold for 90 days
+        trend = "increasing"
+        strength = min(100, abs(normalized_slope))
+    elif normalized_slope < -0.15:
+        trend = "decreasing"
+        strength = min(100, abs(normalized_slope))
+    else:
+        trend = "stable"
+        strength = abs(normalized_slope)
+    
+    return {
+        "trend": trend,
+        "strength": round(strength, 2),
+        "confidence": round(confidence, 3),
+        "price_change_pct": round(price_change_pct, 2),
+        "early_avg": round(early_avg, 2),
+        "late_avg": round(late_avg, 2)
+    }
+
 def classify_trend(df: pd.DataFrame) -> str:
-    if df.shape[0] < 10:
-        return "stable"
-
-    df_sorted = df.sort_values("price_date")
-    x = df_sorted["date_ordinal"].values
-    y = df_sorted["modal_price"].values
-    slope = np.polyfit(x, y, 1)[0]
-    mean_price = float(np.mean(y)) if len(y) else 0
-    if mean_price <= 0:
-        return "stable"
-
-    normalized_slope = slope / mean_price
-    if normalized_slope > 0.0005:
-        return "increasing"
-    if normalized_slope < -0.0005:
-        return "decreasing"
-    return "stable"
+    """Legacy function wrapper for backward compatibility"""
+    result = classify_trend_90day(df)
+    return result["trend"]
 
 def classify_stability(df: pd.DataFrame) -> str:
     if df.shape[0] < 10:
@@ -215,6 +274,8 @@ def classify_stability(df: pd.DataFrame) -> str:
     if cv < 0.15:
         return "moderate"
     return "volatile"
+
+
 
 def forecast_price_ml(df: pd.DataFrame, cache_key: str):
     if df.shape[0] < 30:
@@ -563,29 +624,124 @@ def predict_yield():
             "message": str(e)
         }), 500
 
+def get_agmarket_trend_data(crop, state=None, district=None, market=None, days=90):
+    """Fetch trend data from agmarket API - NOT USED for 90-day forecasts.
+    90-day predictions are exclusively from local CSV dataset for consistency and reliability."""
+    try:
+        # Try to fetch live data from agmarket
+        records, err = fetch_agmarket_live(crop, source="auto")
+        
+        if not records or err:
+            logger.info(f"No agmarket data for {crop}, falling back to local data")
+            return None
+        
+        # Convert agmarket API records to time-series DataFrame
+        processed_records = []
+        
+        for record in records:
+            try:
+                # Parse date from various formats
+                date_str = record.get("date", "")
+                if not date_str:
+                    continue
+                
+                # Try parsing different date formats
+                parsed_date = None
+                for fmt in ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d-%b-%Y"]:
+                    try:
+                        parsed_date = datetime.strptime(str(date_str).strip(), fmt)
+                        break
+                    except:
+                        continue
+                
+                if not parsed_date:
+                    continue
+                
+                # Filter by state/district/market if provided
+                record_state = record.get("state", "").strip().lower()
+                record_district = record.get("district", "").strip().lower()
+                record_market = record.get("market", "").strip().lower()
+                
+                if state and state.lower() not in record_state:
+                    continue
+                if district and district.lower() not in record_district:
+                    continue
+                if market and market.lower() not in record_market:
+                    continue
+                
+                modal_price = float(record.get("modal_price") or 0)
+                if modal_price <= 0:
+                    continue
+                
+                processed_records.append({
+                    "price_date": parsed_date,
+                    "date_ordinal": parsed_date.toordinal(),
+                    "month": parsed_date.month,
+                    "dayofyear": parsed_date.timetuple().tm_yday,
+                    "modal_price": modal_price,
+                    "min_price": float(record.get("min_price") or modal_price),
+                    "max_price": float(record.get("max_price") or modal_price),
+                    "market": record.get("market", ""),
+                    "state": record.get("state", ""),
+                    "district": record.get("district", "")
+                })
+            except Exception as e:
+                logger.debug(f"Error processing agmarket record: {e}")
+                continue
+        
+        if not processed_records:
+            logger.info(f"No valid agmarket records for {crop} after filtering")
+            return None
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(processed_records)
+        
+        # Sort by date and drop duplicates (keep last occurrence)
+        df = df.sort_values("price_date")
+        df = df.drop_duplicates(subset=["price_date"], keep="last")
+        
+        # Filter to last N days
+        latest_date = df["price_date"].max()
+        cutoff_date = latest_date - timedelta(days=days)
+        df = df[df["price_date"] >= cutoff_date].copy()
+        
+        logger.info(f"Successfully fetched {len(df)} agmarket records for {crop}")
+        return df if len(df) > 0 else None
+        
+    except Exception as e:
+        logger.error(f"Error fetching agmarket trend data for {crop}: {e}")
+        return None
+
 @app.route('/api/market-insights/<crop>', methods=['GET'])
 def market_insights(crop):
-    """Get market insights for a specific crop"""
+    """Get market insights for a specific crop using local dataset and 30-day forecasts"""
     try:
         state = request.args.get("state")
         district = request.args.get("district")
         market = request.args.get("market")
         season = request.args.get("season")
-
+        
+        crop_data = None
+        data_source = "local_csv"
+        
+        # Use local dataset
         crop_data_all = filter_market_prices(crop, state=state, district=district, market=market)
         season_filtered_data, season_filter_applied = apply_season_filter(crop_data_all, season)
         crop_data = season_filtered_data if not season_filtered_data.empty else crop_data_all
+        data_source = "local_csv"
+        logger.info(f"Using local CSV data for {crop} - {len(crop_data)} records")
 
-        if crop_data.empty:
+        if crop_data is None or crop_data.empty:
             return jsonify({
                 "status": "success",
                 "crop": crop,
                 "has_market_data": False,
+                "data_source": data_source,
                 "market_data": {
                     "demand_trend": "no data",
                     "price_stability": "no data",
                     "global_demand": "no data",
-                    "recommendation": f"No price records found for {crop} in current market dataset."
+                    "recommendation": f"No price records found for {crop} in market dataset. Try a different crop."
                 },
                 "optimal_conditions": {
                     "temperature_range": "20-30°C",
@@ -611,19 +767,22 @@ def market_insights(crop):
         latest_date = latest_row["price_date"]
         latest_price = float(latest_row["modal_price"])
 
+        # Get 30-day data for trend analysis
         last_30 = crop_data[crop_data["price_date"] >= latest_date - timedelta(days=30)]
-        last_90 = crop_data[crop_data["price_date"] >= latest_date - timedelta(days=90)]
+        
         avg_30 = float(last_30["modal_price"].mean()) if not last_30.empty else latest_price
-        avg_90 = float(last_90["modal_price"].mean()) if not last_90.empty else avg_30
 
-        price_change_90 = 0.0
-        if avg_90:
-            price_change_90 = ((avg_30 - avg_90) / avg_90) * 100
-
-        trend = classify_trend(last_90 if not last_90.empty else crop_data)
-        stability = classify_stability(last_90 if not last_90.empty else crop_data)
+        # Use trend analysis on available historical data
+        trend_analysis = classify_trend_90day(crop_data)
+        trend = trend_analysis["trend"]
+        trend_strength = trend_analysis["strength"]
+        trend_confidence = trend_analysis["confidence"]
+        
+        stability = classify_stability(crop_data)
 
         cache_key = f"{normalize_text(crop)}|{normalize_text(state)}|{normalize_text(district)}|{normalize_text(market)}"
+        
+        # Get 30-day forecast
         forecast = forecast_price_ml(crop_data, cache_key)
 
         if stability == "volatile":
@@ -635,18 +794,26 @@ def market_insights(crop):
 
         demand_trend = "high" if trend == "increasing" else "moderate" if trend == "stable" else "low"
 
-        recommendation = f"{crop.title()} prices are {trend}."
+        recommendation = f"{crop.title()} prices show {trend} trend with {trend_strength:.1f}% strength"
         if forecast:
-            recommendation += f" 30-day expected average is about {forecast['avg']:.1f}."
+            recommendation += f". Expected 30-day average: ₹{forecast['avg']:.1f}/quintal"
+        recommendation += "."
 
         insights = {
             "status": "success",
             "crop": crop,
             "has_market_data": True,
+            "data_source": data_source,
             "market_data": {
                 "demand_trend": demand_trend,
                 "price_stability": stability,
                 "global_demand": trend,
+                "trend_details": {
+                    "trend": trend,
+                    "strength": round(trend_strength, 2),
+                    "confidence": round(trend_confidence, 3),
+                    "period_days": len(crop_data)
+                },
                 "latest_price": {
                     "value": round(latest_price, 2),
                     "unit": "INR/quintal",
@@ -657,7 +824,6 @@ def market_insights(crop):
                     "unit": "INR/quintal",
                     "days": 30
                 },
-                "price_change_90d_pct": round(price_change_90, 2),
                 "forecast_30d": {
                     "avg": round(forecast["avg"], 2) if forecast else None,
                     "min": round(forecast["min"], 2) if forecast else None,
@@ -686,18 +852,22 @@ def market_insights(crop):
             },
             "data_coverage": {
                 "records": int(crop_data.shape[0]),
+                "last_30_records": int(last_30.shape[0]),
                 "from": crop_data["price_date"].min().strftime("%Y-%m-%d"),
                 "to": latest_date.strftime("%Y-%m-%d"),
-                "season_filter_applied": season_filter_applied
+                "season_filter_applied": season_filter_applied,
+                "data_source": data_source,
+                "note": f"Using {len(last_30)} days of data for trend analysis"
             }
         }
         
         return jsonify(insights)
     
     except Exception as e:
-        logger.error(f"Error getting market insights: {e}")
+        logger.error(f"Error getting market insights for {crop}: {e}", exc_info=True)
         return jsonify({
             "status": "error",
+            "crop": crop,
             "message": str(e)
         }), 500
 
@@ -996,7 +1166,7 @@ def fetch_agmarket_live(commodity, source="auto"):
 
 
 def _get_local_chart_fallback(commodity, days=90):
-    """Build time_series + by_mandi from local market_prices. Expands sparse data to 90-day trend."""
+    """Build time_series + by_mandi from local market_prices for specified number of days."""
     if market_prices is None:
         return [], [], None
     crop_data = filter_market_prices(commodity)
@@ -1011,7 +1181,9 @@ def _get_local_chart_fallback(commodity, days=90):
         return [], [], None
     crop_data = crop_data.sort_values("price_date")
     latest_date = crop_data["price_date"].max()
-    recent = crop_data
+    # Filter to requested number of days
+    cutoff_date = latest_date - timedelta(days=days-1)
+    recent = crop_data[crop_data["price_date"] >= cutoff_date]
     ts_df = recent.groupby(recent["price_date"].dt.date).agg(
         modal_price=("modal_price", "mean"),
         min_price=("modal_price", "min"),
@@ -1312,8 +1484,12 @@ def internal_error(error):
     return jsonify({"status": "error", "message": "Internal server error"}), 500
 
 if __name__ == '__main__':
-    # Load models on startup
-    if load_models():
-        app.run(debug=True, host='0.0.0.0', port=5000)
-    else:
-        logger.error("Failed to load models. Exiting...")
+    # Verify models are loaded (they should be from _initialize_app(), but double check)
+    if market_prices is None:
+        logger.warning("Models not yet loaded, attempting to load now...")
+        if not load_models():
+            logger.error("Failed to load models. Exiting...")
+            exit(1)
+    
+    logger.info("✓ Models verified loaded, starting Flask app...")
+    app.run(debug=True, host='0.0.0.0', port=5000)

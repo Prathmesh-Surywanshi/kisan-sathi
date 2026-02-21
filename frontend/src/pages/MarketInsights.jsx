@@ -23,6 +23,7 @@ function MarketInsights({ crops = [] }) {
   const [liveRecords, setLiveRecords] = useState([]);
   const [liveSource, setLiveSource] = useState(false);
   const [aajKaBhavState, setAajKaBhavState] = useState({ value: null, date: null, available: false, message: null });
+  const [aajKaBhavLoading, setAajKaBhavLoading] = useState(false);
   const [cedaCommodities, setCedaCommodities] = useState([]);
   const [cedaLoading, setCedaLoading] = useState(false);
   const [commodityFilter, setCommodityFilter] = useState("");
@@ -80,112 +81,54 @@ function MarketInsights({ crops = [] }) {
   const fetchChartAndLiveData = async (crop) => {
     if (!crop) return;
     try {
-      const [historyRes, liveRes] = await Promise.all([
-        fetch(`${API_BASE}/agmarket/history?commodity=${encodeURIComponent(crop)}&days=90`),
-        fetch(`${API_BASE}/agmarket/live?commodity=${encodeURIComponent(crop)}&source=api`),
-      ]);
+      // Fetch only historical data for the chart (from local dataset)
+      const historyRes = await fetch(`${API_BASE}/agmarket/history?commodity=${encodeURIComponent(crop)}&days=90`);
       const historyJson = await historyRes.json();
-      const liveJson = await liveRes.json();
 
-      // Determine live records (prefer live API records, fall back to history records)
-      const liveApiRecords = Array.isArray(liveJson.records) ? liveJson.records : [];
-      const historyRecords = Array.isArray(historyJson.records) ? historyJson.records : [];
-      const records = liveApiRecords.length ? liveApiRecords : historyRecords;
-      setLiveRecords(records);
-      setLiveSource(liveApiRecords.length > 0);
+      // Use ONLY historical data for chart
+      setChartData({
+        time_series: historyJson.time_series || [],
+        by_mandi: historyJson.by_mandi || [],
+        latest_date: historyJson.latest_date || null,
+      });
 
-      // Decide whether to use live API records for trend (require enough unique dates / records)
-      const uniqueLiveDates = [...new Set(liveApiRecords.map((r) => r.date).filter(Boolean))];
-      const enoughLive = liveApiRecords.length >= 30 || uniqueLiveDates.length >= 14;
+      // Optionally fetch live data separately for Aaj Ka Bhav display (doesn't affect chart)
+      try {
+        setAajKaBhavLoading(true);
+        const liveRes = await fetch(`${API_BASE}/agmarket/live?commodity=${encodeURIComponent(crop)}&source=api`);
+        const liveJson = await liveRes.json();
+        
+        const liveApiRecords = Array.isArray(liveJson.records) ? liveJson.records : [];
+        setLiveRecords(liveApiRecords);
+        setLiveSource(liveApiRecords.length > 0);
 
-      if (enoughLive) {
-        // Build time_series (daily aggregates) from live records
-        const tsMap = {};
-        liveApiRecords.forEach((r) => {
-          let d = r.date;
-          try {
-            const dt = new Date(r.date);
-            if (!isNaN(dt)) d = dt.toISOString().slice(0, 10);
-          } catch (e) { }
-          if (!d) return;
-          if (!tsMap[d]) tsMap[d] = { modal: [], min: [], max: [] };
-          tsMap[d].modal.push(Number(r.modal_price) || 0);
-          tsMap[d].min.push(Number(r.min_price) || Number(r.modal_price) || 0);
-          tsMap[d].max.push(Number(r.max_price) || Number(r.modal_price) || 0);
-        });
-
-        const dates = Object.keys(tsMap).sort();
-        const time_series = dates.map((date) => {
-          const rec = tsMap[date];
-          const modal_avg = rec.modal.reduce((s, v) => s + v, 0) / rec.modal.length;
-          return {
-            date,
-            modal_price: Math.round(modal_avg * 100) / 100,
-            min_price: Math.round(Math.min(...rec.min) * 100) / 100,
-            max_price: Math.round(Math.max(...rec.max) * 100) / 100,
-          };
-        });
-
-        // Build by_mandi for latest date
-        const latestDate = dates[dates.length - 1];
-        const latestRecs = liveApiRecords.filter((r) => {
-          try {
-            const dt = new Date(r.date);
-            const dstr = isNaN(dt) ? r.date : dt.toISOString().slice(0, 10);
-            return dstr === latestDate;
-          } catch (e) {
-            return r.date === latestDate;
+        // Compute Aaj Ka Bhav from live API response when available
+        if (liveApiRecords.length) {
+          const dates = [...new Set(liveApiRecords.map((r) => r.date).filter(Boolean))].sort();
+          const latestDate = dates[dates.length - 1];
+          const latestRecs = latestDate ? liveApiRecords.filter((r) => r.date === latestDate) : liveApiRecords;
+          if (latestRecs.length) {
+            const avgPrice = latestRecs.reduce((s, r) => s + (r.modal_price || 0), 0) / latestRecs.length;
+            setAajKaBhavState({ value: Math.round(avgPrice * 100) / 100, date: latestDate || null, available: true, message: null });
+          } else {
+            setAajKaBhavState({ value: null, date: null, available: false, message: null });
           }
-        });
-
-        const mandiMap = {};
-        latestRecs.forEach((r) => {
-          const key = `${r.market || ''}||${r.state || ''}||${r.district || ''}`;
-          if (!mandiMap[key]) mandiMap[key] = { market: r.market || '', state: r.state || '', district: r.district || '', prices: [] };
-          mandiMap[key].prices.push(Number(r.modal_price) || 0);
-        });
-
-        const by_mandi = Object.values(mandiMap).map((m) => ({
-          market: m.market,
-          state: m.state,
-          district: m.district,
-          modal_price: Math.round((m.prices.reduce((s, v) => s + v, 0) / m.prices.length) * 100) / 100,
-          min_price: Math.min(...m.prices),
-          max_price: Math.max(...m.prices),
-        }));
-
-        setChartData({ time_series, by_mandi, latest_date: latestDate });
-      } else {
-        // Fallback to history endpoint (local dataset) for trends
-        setChartData({
-          time_series: historyJson.time_series || [],
-          by_mandi: historyJson.by_mandi || [],
-          latest_date: historyJson.latest_date || null,
-        });
-      }
-
-      // Compute Aaj Ka Bhav from live API response when available
-      if (liveApiRecords.length) {
-        const dates = [...new Set(liveApiRecords.map((r) => r.date).filter(Boolean))].sort();
-        const latestDate = dates[dates.length - 1];
-        const latestRecs = latestDate ? liveApiRecords.filter((r) => r.date === latestDate) : liveApiRecords;
-        if (latestRecs.length) {
-          const avgPrice = latestRecs.reduce((s, r) => s + (r.modal_price || 0), 0) / latestRecs.length;
-          setAajKaBhavState({ value: Math.round(avgPrice * 100) / 100, date: latestDate || null, available: true, message: null });
         } else {
-          setAajKaBhavState({ value: null, date: null, available: false, message: 'No live records' });
+          // Don't show message while loading, only if fetch completes with no data
+          setAajKaBhavState({ value: null, date: null, available: false, message: null });
         }
-      } else {
-        // If live not available, propagate message from backend if present
-        const msg = liveJson?.message || 'live prices not found';
-        setAajKaBhavState({ value: null, date: null, available: false, message: msg });
+      } catch (liveError) {
+        console.error("Error fetching live data for Aaj Ka Bhav:", liveError);
+        setAajKaBhavState({ value: null, date: null, available: false, message: 'Could not fetch live data' });
+      } finally {
+        setAajKaBhavLoading(false);
       }
     } catch (error) {
-      console.error("Error fetching chart/live data:", error);
+      console.error("Error fetching chart data:", error);
       setChartData({ time_series: [], by_mandi: [], latest_date: null });
       setLiveRecords([]);
       setLiveSource(false);
-      setAajKaBhavState({ value: null, date: null, available: false, message: 'Error fetching live data' });
+      setAajKaBhavState({ value: null, date: null, available: false, message: 'Error fetching data' });
     }
   };
 
@@ -223,7 +166,18 @@ function MarketInsights({ crops = [] }) {
 
   // Aaj Ka Bhav is provided from `aajKaBhavState` (set when live API responds)
 
-  const priceTrend = marketData?.market_data?.price_change_90d_pct;
+  // Calculate price trend from local chart data
+  const priceTrend = useMemo(() => {
+    if (!chartData?.time_series || chartData.time_series.length < 2) return null;
+    const firstPrice = chartData.time_series[0]?.modal_price;
+    const lastPrice = chartData.time_series[chartData.time_series.length - 1]?.modal_price;
+    if (firstPrice && lastPrice) {
+      const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
+      return Math.round(percentChange * 100) / 100;
+    }
+    return null;
+  }, [chartData.time_series]);
+
   const forecastAvg = marketData?.market_data?.forecast_30d?.avg;
 
   const filteredCropList = useMemo(() => {
@@ -324,7 +278,9 @@ function MarketInsights({ crops = [] }) {
                       )}
                     </span>
                     <span className="summary-value">
-                      {aajKaBhavState?.available && aajKaBhavState?.value != null
+                      {aajKaBhavLoading
+                        ? <span className="fetching-text">Fetching value...</span>
+                        : aajKaBhavState?.available && aajKaBhavState?.value != null
                         ? `₹ ${Number(aajKaBhavState.value).toLocaleString("en-IN")}`
                         : aajKaBhavState?.message || "live prices not found"}
                     </span>
