@@ -1,9 +1,9 @@
 @echo off
-REM KAISAN Setup Script for Windows
+REM KISAN Setup Script for Windows
 REM This script sets up the entire project with backend and frontend
 
 echo.
-echo 🌾 KAISAN - Crop Recommendation System Setup
+echo 🌾 KISAN - Crop Recommendation System Setup
 echo ============================================
 echo.
 

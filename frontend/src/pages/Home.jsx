@@ -42,7 +42,7 @@ function Home() {
       {/* Features Section */}
       <section className="features-section section">
         <div className="container">
-          <h2 className="text-center">Why Choose KAISAN?</h2>
+          <h2 className="text-center">Why Choose KISAN?</h2>
           <p className="section-subtitle text-center">
             Empowering Indian farmers with intelligent agricultural decision support
           </p>
@@ -148,7 +148,7 @@ function Home() {
         <div className="container">
           <h2 className="text-center">Supported Crops</h2>
           <p className="section-subtitle text-center">
-            KAISAN provides recommendations for 22 major Indian crops
+            KISAN provides recommendations for 22 major Indian crops
           </p>
           
           <div className="crops-grid">
@@ -160,7 +160,7 @@ function Home() {
       {/* Footer */}
       <footer className="footer">
         <div className="container">
-          <p>&copy; 2024 KAISAN - Crop Recommendation System. All rights reserved.</p>
+          <p>&copy; 2024 KISAN - Crop Recommendation System. All rights reserved.</p>
           <p>Making agriculture smarter, one decision at a time.</p>
         </div>
       </footer>
