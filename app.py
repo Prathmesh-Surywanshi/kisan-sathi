@@ -38,6 +38,7 @@ market_prices = None
 market_model_cache = {}
 location_data = None
 soil_defaults = None
+state_soil_data = None
 
 SEASON_MONTHS = {
     "summer": [3, 4, 5, 6],
@@ -52,7 +53,7 @@ WEATHER_API_BASE = "https://api.weatherapi.com/v1/current.json"
 
 def load_models():
     """Load trained ML models and scalers"""
-    global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices, location_data, soil_defaults
+    global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices, location_data, soil_defaults, state_soil_data
     
     try:
         logger.info("Loading models...")
@@ -120,6 +121,16 @@ def load_models():
         except Exception as e:
             logger.warning(f"Could not load soil defaults: {e}")
             soil_defaults = None
+        
+        # Load state-wise NPK data from government dataset
+        try:
+            state_soil_data = pd.read_csv(PROCESSED_DATA_DIR / "cleaned_statewise_n,p,k,ph_dataset.csv")
+            # Normalize state names for matching
+            state_soil_data['State'] = state_soil_data['State'].str.strip().str.lower()
+            logger.info(f"✓ State-wise soil data loaded: {state_soil_data.shape[0]} states")
+        except Exception as e:
+            logger.warning(f"Could not load state-wise soil data: {e}")
+            state_soil_data = None
         
         logger.info("✓ All models loaded successfully!")
         return True
@@ -485,7 +496,33 @@ def get_soil_data():
         if not state:
             return jsonify({"status": "error", "message": "State is required"}), 400
         
-        # Use soil defaults from crop recommendation data (averaged values)
+        state_key = normalize_text(state)
+        
+        # Try to use government state-wise data first (most accurate)
+        if state_soil_data is not None and not state_soil_data.empty:
+            state_match = state_soil_data[state_soil_data['State'] == state_key]
+            
+            if not state_match.empty:
+                row = state_match.iloc[0]
+                soil_params = {
+                    'nitrogen': float(row['Nitrogen']),
+                    'phosphorus': float(row['Phosphorus']),
+                    'potassium': float(row['Potassium']),
+                    'ph': float(row['pH']),
+                    'state': state,
+                    'district': district,
+                    'data_source': 'government_statewise_data'
+                }
+                
+                logger.info(f"✓ Using govt data for {state}: N={row['Nitrogen']}, P={row['Phosphorus']}, K={row['Potassium']}, pH={row['pH']}")
+                
+                return jsonify({
+                    "status": "success",
+                    "soil_data": soil_params,
+                    "message": f"Official soil data for {state}"
+                })
+        
+        # Fallback to crop recommendation dataset averages with state variations
         if soil_defaults is None or soil_defaults.empty:
             return jsonify({
                 "status": "error",
@@ -493,13 +530,12 @@ def get_soil_data():
             }), 404
         
         # Get average NPK and pH values from the dataset
-        # For now, provide typical values - in production, this could be location-specific
         n_avg = float(soil_defaults['n'].mean())
         p_avg = float(soil_defaults['p'].mean())
         k_avg = float(soil_defaults['k'].mean())
         ph_avg = float(soil_defaults['ph'].mean())
         
-        # Add some variation based on state (simplified approach)
+        # Add some variation based on state (simplified approach - fallback only)
         state_variations = {
             'punjab': {'n': 1.1, 'p': 1.0, 'k': 0.9, 'ph': 1.0},
             'haryana': {'n': 1.1, 'p': 1.0, 'k': 0.9, 'ph': 1.0},
@@ -509,7 +545,6 @@ def get_soil_data():
             'tamil nadu': {'n': 0.9, 'p': 1.1, 'k': 1.0, 'ph': 0.97},
         }
         
-        state_key = normalize_text(state)
         variation = state_variations.get(state_key, {'n': 1.0, 'p': 1.0, 'k': 1.0, 'ph': 1.0})
         
         soil_params = {
@@ -521,6 +556,8 @@ def get_soil_data():
             'district': district,
             'data_source': 'aggregated_crop_data'
         }
+        
+        logger.warning(f"⚠ Using fallback data for {state} (govt data not found)")
         
         return jsonify({
             "status": "success",
