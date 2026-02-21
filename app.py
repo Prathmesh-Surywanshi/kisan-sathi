@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import joblib
 import json
+import os
+import requests
 from pathlib import Path
 import logging
 from datetime import datetime, timedelta
@@ -36,6 +38,16 @@ market_prices = None
 market_model_cache = {}
 location_data = None
 soil_defaults = None
+
+# WhatsApp Cloud API config (set these as environment variables)
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "my_verify_token_123")
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_GRAPH_API_VERSION = os.getenv("WHATSAPP_GRAPH_API_VERSION", "v22.0")
+GRAPH_API_URL = (
+    f"https://graph.facebook.com/{WHATSAPP_GRAPH_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    if WHATSAPP_PHONE_NUMBER_ID else None
+)
 
 SEASON_MONTHS = {
     "summer": [3, 4, 5, 6],
@@ -125,6 +137,119 @@ def normalize_text(value: str) -> str:
     if value is None:
         return ""
     return str(value).strip().lower()
+
+def send_whatsapp_message(to: str, message: str) -> bool:
+    """Send a WhatsApp text message via Meta Graph API"""
+    if not WHATSAPP_ACCESS_TOKEN or not GRAPH_API_URL:
+        logger.warning("WhatsApp config missing. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID.")
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": message}
+    }
+
+    try:
+        response = requests.post(GRAPH_API_URL, headers=headers, json=payload, timeout=15)
+        if response.ok:
+            logger.info("WhatsApp message sent successfully")
+            return True
+
+        logger.error(f"WhatsApp send failed ({response.status_code}): {response.text}")
+        return False
+    except requests.RequestException as e:
+        logger.error(f"WhatsApp send exception: {e}")
+        return False
+
+def process_user_message(message: str) -> str:
+    """Basic WhatsApp message processing"""
+    if not message:
+        return "Please send a message. Type 'help' for options."
+
+    text = normalize_text(message)
+
+    if text in {"hi", "hello", "hey", "hii"}:
+        return (
+            "🌾 Welcome to KAISAN!\n\n"
+            "Send one of these:\n"
+            "1) recommend\n"
+            "2) market <crop> (example: market rice)\n"
+            "3) help"
+        )
+
+    if text == "help":
+        return (
+            "Commands:\n"
+            "- recommend\n"
+            "- market <crop>\n"
+            "Example: market wheat"
+        )
+
+    if text == "recommend":
+        return (
+            "Please use the KAISAN web app for full crop recommendation:\n"
+            "http://localhost:3000/recommend"
+        )
+
+    if text.startswith("market"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            return "Please provide crop name. Example: market wheat"
+
+        crop = parts[1].strip()
+        crop_data = filter_market_prices(crop)
+        if crop_data.empty:
+            return f"No market price data found for {crop.title()} right now."
+
+        latest = crop_data.sort_values("price_date").iloc[-1]
+        return (
+            f"📊 {crop.title()} market update:\n"
+            f"Latest price: ₹{float(latest['modal_price']):.2f} per quintal\n"
+            f"Date: {latest['price_date'].strftime('%Y-%m-%d')}"
+        )
+
+    return "I did not understand. Type 'help'."
+
+@app.route('/webhook', methods=['GET'])
+def verify_webhook():
+    """Meta webhook verification endpoint"""
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+
+    if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
+        return challenge or "", 200
+
+    return "Verification failed", 403
+
+@app.route('/webhook', methods=['POST'])
+def whatsapp_webhook():
+    """Receive WhatsApp webhook events and auto-reply"""
+    data = request.json or {}
+    logger.info(f"Incoming WhatsApp webhook: {json.dumps(data)[:500]}")
+
+    try:
+        entries = data.get("entry", [])
+        for entry in entries:
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+                messages = value.get("messages", [])
+                for msg in messages:
+                    sender = msg.get("from")
+                    text_body = msg.get("text", {}).get("body", "")
+                    if sender and text_body:
+                        reply_text = process_user_message(text_body)
+                        send_whatsapp_message(sender, reply_text)
+    except Exception as e:
+        logger.error(f"Error processing WhatsApp webhook: {e}")
+
+    return "OK", 200
 
 def filter_market_prices(crop: str, state: str = None, district: str = None, market: str = None):
     if market_prices is None:
