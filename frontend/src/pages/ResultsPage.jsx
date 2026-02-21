@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { useLocation, Link } from 'react-router-dom';
-import { CheckCircle, TrendingUp, Cloud, Droplets, Zap } from 'lucide-react';
+import { CheckCircle, Cloud, Droplets, TrendingUp, Zap } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import '../styles/ResultsPage.css';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 function ResultsPage() {
   const location = useLocation();
@@ -19,7 +21,7 @@ function ResultsPage() {
 
   const fetchRiskData = async (crop) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/market-insights/${crop}`);
+      const response = await fetch(`${API_BASE_URL}/api/market-insights/${crop}`);
       const data = await response.json();
       if (data.status === 'success') {
         setRiskData(data);

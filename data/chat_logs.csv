@@ -57,3 +57,31 @@ Send:
 3️⃣ forecast <crop>
 4️⃣ season <rainy|summer|winter|spring>
 5️⃣ help"
+2026-02-21T23:13:23.641542,919172014025,unknown,Hii,"नमस्ते / नमस्कार / Hello 👋
+
+Choose your preferred language:"
+2026-02-21T23:13:30.218721,919172014025,unknown,lang_en,"Language set to en
+
+🌾 Welcome to KISAN - Your Crop Companion!
+
+Choose what you need:
+🌾 Recommend - Get crop recommendation
+📊 Market - Check market prices
+📅 Season - See seasonal crops"
+2026-02-21T23:13:36.190286,919172014025,recommend,recommend,"🌾 Please send your location:
+
+State | District
+
+Example:
+Maharashtra | Pune"
+2026-02-21T23:13:57.098753,919172014025,unknown,Maharashtra | Pune,"📍 Location: Maharashtra, Pune
+🌾 Recommended: muskmelon
+✅ Confidence: 22.0%
+
+🌦 Climate: 25.62°C, 71.48% humidity
+🧪 Rainfall: 3.12mm
+
+Top Suggestions:
+- muskmelon (22.0%)
+- chickpea (19.67%)
+- grapes (10.5%)"

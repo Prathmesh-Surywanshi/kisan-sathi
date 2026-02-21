@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
 import { Globe } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import '../styles/MarketInsights.css';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 function MarketInsights({ crops = [] }) {
   const [selectedSeason, setSelectedSeason] = useState('rainy');
@@ -23,7 +25,7 @@ function MarketInsights({ crops = [] }) {
   const fetchSeasonalRecommendations = async (season) => {
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/seasonal-recommendations/${season}`);
+      const response = await fetch(`${API_BASE_URL}/api/seasonal-recommendations/${season}`);
       const data = await response.json();
       if (data.status === 'success') {
         setSeasonalCrops(data.recommended_crops);
@@ -42,7 +44,7 @@ function MarketInsights({ crops = [] }) {
   const fetchMarketInsights = async (crop) => {
     try {
       const response = await fetch(
-        `http://localhost:5000/api/market-insights/${crop}?season=${selectedSeason}`
+        `${API_BASE_URL}/api/market-insights/${crop}?season=${selectedSeason}`
       );
       const data = await response.json();
       if (data.status === 'success') {

@@ -8,6 +8,8 @@ import MarketInsights from './pages/MarketInsights';
 import RecommendationPage from './pages/RecommendationPage';
 import ResultsPage from './pages/ResultsPage';
 
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+
 function App() {
   const [crops, setCrops] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -16,7 +18,7 @@ function App() {
     // Fetch available crops on app load
     const fetchCrops = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/crops/list');
+        const response = await fetch(`${API_BASE_URL}/api/crops/list`);
         const data = await response.json();
         if (data.status === 'success') {
           setCrops(data.crops);
