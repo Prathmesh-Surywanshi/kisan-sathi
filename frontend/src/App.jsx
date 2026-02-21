@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import './App.css';
 import Header from './components/Header';
+import Navbar from './components/Navbar';
 import Home from './pages/Home';
+import MarketInsights from './pages/MarketInsights';
 import RecommendationPage from './pages/RecommendationPage';
 import ResultsPage from './pages/ResultsPage';
-import MarketInsights from './pages/MarketInsights';
-import Navbar from './components/Navbar';
 
 function App() {
   const [crops, setCrops] = useState([]);
@@ -37,6 +37,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/recommend" element={<RecommendationPage crops={crops} />} />
+          <Route path="/result" element={<ResultsPage />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/market-insights" element={<MarketInsights crops={crops} />} />
         </Routes>
