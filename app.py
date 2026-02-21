@@ -11,6 +11,8 @@ import joblib
 import json
 import os
 import requests
+import urllib.request
+import urllib.parse
 from pathlib import Path
 import logging
 from datetime import datetime, timedelta
@@ -19,6 +21,21 @@ import csv
 from sklearn.ensemble import RandomForestRegressor
 from dotenv import load_dotenv
 from difflib import SequenceMatcher
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+AGMARKET_API_KEY = os.environ.get("AGMARKET_API_KEY", "").strip()
+DATA_GOV_IN_API_KEY = os.environ.get("DATA_GOV_IN_API_KEY", "").strip() or AGMARKET_API_KEY
+DATA_GOV_IN_RESOURCE_IDS = [
+    "variety-wise-daily-market-prices-data-commodity",
+    "9ef84268-d588-465a-a308-a864a43d0070",
+]
+CEDA_AGMARKNET_BASE = "https://agmarknet.ceda.ashoka.edu.in/api"
+_ceda_commodities_cache = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1286,6 +1303,12 @@ def whatsapp_webhook():
 
     return "OK", 200
 
+def _get_available_crops_set():
+    """Return set of crop names (lowercase) that we have market data for."""
+    if market_prices is None or market_prices.empty:
+        return set()
+    return set(market_prices["commodity"].astype(str).str.strip().str.lower().unique())
+
 def filter_market_prices(crop: str, state: str = None, district: str = None, market: str = None):
     if market_prices is None:
         return pd.DataFrame()
@@ -1990,6 +2013,506 @@ def market_insights(crop):
             "status": "error",
             "message": str(e)
         }), 500
+
+
+@app.route('/api/market-insights/<crop>/chart-data', methods=['GET'])
+def market_insights_chart_data(crop):
+    """Get time series and mandi-wise price data for charts"""
+    try:
+        state = request.args.get("state")
+        district = request.args.get("district")
+        market = request.args.get("market")
+        crop_data = filter_market_prices(crop, state=state, district=district, market=market)
+        if crop_data.empty:
+            return jsonify({
+                "status": "success",
+                "crop": crop,
+                "time_series": [],
+                "by_mandi": [],
+                "message": "No price records for this crop."
+            })
+
+        crop_data = crop_data.sort_values("price_date")
+        latest_date = crop_data["price_date"].max()
+        cutoff = latest_date - timedelta(days=90)
+        recent = crop_data[crop_data["price_date"] >= cutoff]
+
+        ts_df = recent.groupby(recent["price_date"].dt.date).agg(
+            modal_price=("modal_price", "mean"),
+            min_price=("modal_price", "min"),
+            max_price=("modal_price", "max")
+        ).reset_index()
+        ts_df["price_date"] = ts_df["price_date"].astype(str)
+        time_series = [
+            {
+                "date": r["price_date"],
+                "modal_price": round(float(r["modal_price"]), 2),
+                "min_price": round(float(r["min_price"]), 2),
+                "max_price": round(float(r["max_price"]), 2)
+            }
+            for _, r in ts_df.iterrows()
+        ]
+
+        latest_date_only = latest_date.date() if hasattr(latest_date, "date") else latest_date
+        crop_latest = crop_data[crop_data["price_date"].dt.date == latest_date_only]
+        if crop_latest.empty:
+            crop_latest = crop_data[crop_data["price_date"] == latest_date]
+        latest_per_mandi = (
+            crop_latest
+            .groupby(["market", "state", "district"], as_index=False)
+            .agg(modal_price=("modal_price", "mean"), min_price=("modal_price", "min"), max_price=("modal_price", "max"))
+        )
+        by_mandi = [
+            {
+                "market": row["market"].title() if pd.notna(row["market"]) else "Unknown",
+                "state": row["state"].title() if pd.notna(row["state"]) else "",
+                "district": row["district"].title() if pd.notna(row["district"]) else "",
+                "modal_price": round(float(row["modal_price"]), 2),
+                "min_price": round(float(row["min_price"]), 2),
+                "max_price": round(float(row["max_price"]), 2),
+                "date": latest_date.strftime("%Y-%m-%d")
+            }
+            for _, row in latest_per_mandi.head(15).iterrows()
+        ]
+        by_mandi.sort(key=lambda x: x["modal_price"], reverse=True)
+
+        return jsonify({
+            "status": "success",
+            "crop": crop,
+            "time_series": time_series,
+            "by_mandi": by_mandi,
+            "latest_date": latest_date.strftime("%Y-%m-%d")
+        })
+    except Exception as e:
+        logger.error(f"Error getting chart data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _fetch_ceda_commodities():
+    """Fetch CEDA commodity list. Returns list of {name, id} for display + lookup."""
+    global _ceda_commodities_cache
+    if _ceda_commodities_cache is not None:
+        return _ceda_commodities_cache
+    try:
+        url = CEDA_AGMARKNET_BASE + "/commodities"
+        req = urllib.request.Request(url, headers={"User-Agent": "KisanSathi/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        items = data.get("data") or []
+        _ceda_commodities_cache = [
+            {"name": (c.get("commodity_disp_name") or "").strip(), "id": c.get("commodity_id")}
+            for c in items if c.get("commodity_id")
+        ]
+        return _ceda_commodities_cache
+    except Exception as e:
+        logger.warning(f"CEDA commodities fetch failed: {e}")
+        return []
+
+
+COMMODITY_NAME_TO_CEDA = {
+    "paddy": "paddy", "rice": "rice", "wheat": "wheat", "maize": "maize",
+    "tomato": "tomato", "potato": "potato", "onion": "onion", "cotton": "cotton",
+    "sugarcane": "sugarcane", "groundnut": "groundnut", "banana": "banana",
+    "mango": "mango", "chickpea": "gram", "gram": "gram", "turmeric": "turmeric",
+    "ginger": "ginger", "red gram": "red gram", "black gram": "black gram",
+    "green gram": "green gram", "bajra": "bajra", "jowar": "jowar", "cauliflower": "cauliflower",
+    "brinjal": "brinjal", "cabbage": "cabbage", "green peas": "green peas",
+}
+
+
+def _resolve_ceda_commodity_id(commodity_name):
+    """Map crop name to CEDA commodity_id."""
+    name = normalize_text(commodity_name)
+    if not name:
+        return None
+    search_name = COMMODITY_NAME_TO_CEDA.get(name, name)
+    items = _fetch_ceda_commodities()
+    for item in items:
+        disp_name = item.get("name") or ""
+        cid = item.get("id")
+        if not disp_name or not cid:
+            continue
+        d = disp_name.lower()
+        s = search_name.lower()
+        if s in d or d.startswith(s):
+            return cid
+        if s.replace(" ", "") in d.replace(" ", "").replace("-", ""):
+            return cid
+        first = (d.split()[0] if d else "")
+        if s == first or s in first:
+            return cid
+    return None
+
+
+def _fetch_ceda_prices(commodity_id, api_key):
+    """Try to fetch price data from CEDA Agmarknet API. Returns (records, None) or (None, error)."""
+    if not commodity_id or not api_key:
+        return None, "missing_params"
+    headers = {
+        "User-Agent": "KisanSathi/1.0",
+        "Accept": "application/json",
+    }
+    endpts = [
+        f"{CEDA_AGMARKNET_BASE}/price_data?commodity_id={commodity_id}&state_id=0&api_key={api_key}",
+        f"{CEDA_AGMARKNET_BASE}/price-data?commodity_id={commodity_id}&state_id=0&api_key={api_key}",
+        f"{CEDA_AGMARKNET_BASE}/data?commodity_id={commodity_id}&api_key={api_key}",
+        f"{CEDA_AGMARKNET_BASE}/table?commodity_id={commodity_id}&api_key={api_key}",
+        f"{CEDA_AGMARKNET_BASE}/records?commodity_id={commodity_id}&api_key={api_key}",
+    ]
+    for url in endpts:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode())
+            rows = data.get("data") or data.get("records") or data.get("rows") or []
+            if rows:
+                return rows, None
+        except Exception as e:
+            logger.debug(f"CEDA endpoint {url[:60]}... failed: {e}")
+            continue
+    return None, "ceda_no_price_endpoint"
+
+
+def _normalize_ceda_record(r, commodity_name):
+    """Convert CEDA API record to our format."""
+    try:
+        modal = float(r.get("modal_price") or r.get("modal_price__rs_quintal") or r.get("Modal_Price") or 0)
+        min_p = float(r.get("min_price") or r.get("min_price__rs_quintal") or r.get("Min_Price") or modal)
+        max_p = float(r.get("max_price") or r.get("max_price__rs_quintal") or r.get("Max_Price") or modal)
+        market = (r.get("market") or r.get("market_name") or r.get("Market") or "Unknown").strip().title()
+        state = (r.get("state") or r.get("state_name") or r.get("State") or "").strip().title()
+        district = (r.get("district") or r.get("district_name") or r.get("District") or "").strip().title()
+        date_val = (r.get("arrival_date") or r.get("price_date") or r.get("date") or r.get("Date") or "").strip()
+        return {
+            "market": market,
+            "state": state,
+            "district": district,
+            "commodity": commodity_name.strip().title(),
+            "modal_price": round(modal, 2),
+            "min_price": round(min_p, 2),
+            "max_price": round(max_p, 2),
+            "date": date_val,
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_ceda_agmarknet_live(commodity):
+    """Fetch live prices from CEDA Agmarknet (agmarknet.ceda.ashoka.edu.in)."""
+    if not AGMARKET_API_KEY:
+        return [], "no_api_key"
+    cid = _resolve_ceda_commodity_id(commodity)
+    if not cid:
+        return [], "commodity_not_found"
+    rows, err = _fetch_ceda_prices(cid, AGMARKET_API_KEY)
+    if err:
+        return [], err
+    out = []
+    for r in rows:
+        rec = _normalize_ceda_record(r, commodity)
+        if rec and rec.get("modal_price", 0) > 0:
+            out.append(rec)
+    return out, None
+
+
+def _normalize_data_gov_record(r, commodity):
+    """Parse a data.gov.in record - supports various field name conventions."""
+    modal = float(
+        r.get("modal_price") or r.get("Modal_Price") or r.get("modal_price__rs_quintal") or 0
+    )
+    min_p = float(
+        r.get("min_price") or r.get("Min_Price") or r.get("min_price__rs_quintal") or modal
+    )
+    max_p = float(
+        r.get("max_price") or r.get("Max_Price") or r.get("max_price__rs_quintal") or modal
+    )
+    if modal <= 0:
+        return None
+    return {
+        "market": (
+            r.get("market") or r.get("Market") or r.get("market_name") or "Unknown"
+        ).strip().title(),
+        "state": (r.get("state") or r.get("State") or "").strip().title(),
+        "district": (
+            r.get("district") or r.get("District") or r.get("district_name") or ""
+        ).strip().title(),
+        "commodity": (
+            r.get("commodity") or r.get("Commodity") or commodity
+        ).strip().title(),
+        "modal_price": round(modal, 2),
+        "min_price": round(min_p, 2),
+        "max_price": round(max_p, 2),
+        "date": (
+            r.get("arrival_date")
+            or r.get("Arrival_Date")
+            or r.get("price_date")
+            or r.get("date")
+            or ""
+        ).strip(),
+    }
+
+
+def fetch_data_gov_in_live(commodity):
+    """Fetch live mandi prices from data.gov.in (OGD) - primary source for Aaj ka bhav."""
+    if not DATA_GOV_IN_API_KEY:
+        return [], "no_api_key"
+    commodity_clean = commodity.strip()
+    filter_val = urllib.parse.quote(commodity_clean)
+    for resource_id in DATA_GOV_IN_RESOURCE_IDS:
+        for filter_key in ("commodity", "Commodity"):
+            url = (
+                f"https://api.data.gov.in/resource/{resource_id}"
+                f"?api-key={DATA_GOV_IN_API_KEY}"
+                f"&format=json&limit=100&offset=0"
+                f"&filters[{filter_key}]={filter_val}"
+            )
+            try:
+                req = urllib.request.Request(
+                    url, headers={"User-Agent": "KisanSathi/1.0"}
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode())
+            except Exception as e:
+                logger.debug(f"data.gov.in {resource_id[:8]}... failed: {e}")
+                continue
+            records = data.get("records") or data.get("data") or []
+            if not records:
+                continue
+            out = []
+            for r in records:
+                rec = _normalize_data_gov_record(r, commodity_clean)
+                if rec:
+                    out.append(rec)
+            if out:
+                return out, None
+    return [], "no_data"
+
+
+def fetch_agmarket_live(commodity, source="auto"):
+    """Fetch live mandi prices. data.gov.in first (for Aaj ka bhav), then CEDA."""
+    if source == "local":
+        return [], "local_only"
+    if not DATA_GOV_IN_API_KEY and not AGMARKET_API_KEY:
+        return [], "no_api_key"
+    
+    # Prefer data.gov.in (OGD) as primary live source for 'Aaj ka bhav'
+    records, err = fetch_data_gov_in_live(commodity)
+    if records:
+        return records, None
+        
+    # Fallback to CEDA Agmarknet if data.gov.in doesn't return data
+    records, err2 = fetch_ceda_agmarknet_live(commodity)
+    if records:
+        return records, None
+        
+    return [], err or err2
+
+
+def _get_local_chart_fallback(commodity, days=90):
+    """Build time_series + by_mandi from local market_prices. Expands sparse data to 90-day trend."""
+    if market_prices is None:
+        return [], [], None
+    crop_data = filter_market_prices(commodity)
+    if crop_data.empty:
+        crop_key = normalize_text(commodity)
+        if crop_key and "commodity" in market_prices.columns:
+            mask = market_prices["commodity"].astype(str).str.contains(
+                crop_key, case=False, na=False, regex=False
+            )
+            crop_data = market_prices.loc[mask].copy()
+    if crop_data.empty:
+        return [], [], None
+    crop_data = crop_data.sort_values("price_date")
+    latest_date = crop_data["price_date"].max()
+    recent = crop_data
+    ts_df = recent.groupby(recent["price_date"].dt.date).agg(
+        modal_price=("modal_price", "mean"),
+        min_price=("modal_price", "min"),
+        max_price=("modal_price", "max")
+    ).reset_index()
+    time_series = [
+        {
+            "date": str(r["price_date"]) if not isinstance(r["price_date"], str) else r["price_date"],
+            "modal_price": round(float(r["modal_price"]), 2),
+            "min_price": round(float(r["min_price"]), 2),
+            "max_price": round(float(r["max_price"]), 2),
+        }
+        for _, r in ts_df.iterrows()
+    ]
+    if time_series and len(time_series) < days:
+        from datetime import date
+        def parse_d(s):
+            s = str(s).strip()[:10]
+            try:
+                if "-" in s:
+                    return datetime.strptime(s, "%Y-%m-%d").date()
+                if "/" in s:
+                    parts = s.split("/")
+                    if len(parts) == 3:
+                        d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+                        if y < 100:
+                            y += 2000
+                        return date(y, m, d)
+            except (ValueError, TypeError):
+                pass
+            return None
+        valid_ts = [(t, parse_d(t["date"])) for t in time_series]
+        valid_ts = [(t, dt) for t, dt in valid_ts if dt is not None]
+        if valid_ts:
+            dates_sorted = sorted([dt for _, dt in valid_ts])
+            price_by_date = {dt.strftime("%Y-%m-%d"): t for t, dt in valid_ts}
+            end_date = dates_sorted[-1]
+            start_date = end_date - timedelta(days=days - 1)
+            expanded = []
+            for i in range(days):
+                d = start_date + timedelta(days=i)
+                d_str = d.strftime("%Y-%m-%d")
+                if d_str in price_by_date:
+                    expanded.append(price_by_date[d_str])
+                else:
+                    nearest_dt = min(dates_sorted, key=lambda dt_key: abs((dt_key - d).days))
+                    nearest = nearest_dt.strftime("%Y-%m-%d")
+                    expanded.append({
+                        "date": d_str,
+                        "modal_price": price_by_date[nearest]["modal_price"],
+                        "min_price": price_by_date[nearest]["min_price"],
+                        "max_price": price_by_date[nearest]["max_price"],
+                    })
+            time_series = expanded
+    latest_date_only = latest_date.date() if hasattr(latest_date, "date") else latest_date
+    crop_latest = crop_data[crop_data["price_date"].dt.date == latest_date_only]
+    if crop_latest.empty:
+        crop_latest = crop_data[crop_data["price_date"] == latest_date]
+    latest_per_mandi = (
+        crop_latest
+        .groupby(["market", "state", "district"], as_index=False)
+        .agg(modal_price=("modal_price", "mean"), min_price=("modal_price", "min"), max_price=("modal_price", "max"))
+    )
+    by_mandi = [
+        {
+            "market": (row["market"].title() if pd.notna(row["market"]) else "Unknown"),
+            "district": (row["district"].title() if pd.notna(row["district"]) else ""),
+            "state": (row["state"].title() if pd.notna(row["state"]) else ""),
+            "modal_price": round(float(row["modal_price"]), 2),
+            "min_price": round(float(row["min_price"]), 2),
+            "max_price": round(float(row["max_price"]), 2),
+        }
+        for _, row in latest_per_mandi.head(15).iterrows()
+    ]
+    by_mandi.sort(key=lambda x: x["modal_price"], reverse=True)
+    latest_str = latest_date.strftime("%Y-%m-%d") if hasattr(latest_date, "strftime") else str(latest_date)
+    return time_series, by_mandi, latest_str
+
+
+@app.route('/api/agmarket/history', methods=['GET'])
+def agmarket_history():
+    """90-day price trend from local dataset only (no live API)."""
+    commodity = request.args.get("commodity", "").strip()
+    days = min(365, max(7, int(request.args.get("days", 90) or 90)))
+    if not commodity:
+        return jsonify({"status": "error", "message": "commodity is required"}), 400
+    time_series, by_mandi, latest = _get_local_chart_fallback(commodity, days=days)
+    return jsonify({
+        "status": "success",
+        "time_series": time_series or [],
+        "by_mandi": by_mandi or [],
+        "latest_date": latest,
+        "source": "local",
+        "records": [],
+    })
+
+
+def _get_local_commodities_fallback():
+    """Fallback commodity list from local market_prices when CEDA is unavailable."""
+    if market_prices is None or market_prices.empty:
+        return []
+    names = market_prices["commodity"].astype(str).str.strip().dropna().unique()
+    return [{"id": normalize_text(n), "name": n.title() if n else ""} for n in sorted(names) if n]
+
+
+@app.route('/api/ceda/commodities', methods=['GET'])
+def ceda_commodities():
+    """Return commodity list from CEDA Agmarknet; fallback to local data if CEDA fails."""
+    try:
+        items = _fetch_ceda_commodities()
+        commodities = [{"id": c["id"], "name": c["name"]} for c in items if c.get("name") and c.get("id")]
+        if not commodities:
+            commodities = _get_local_commodities_fallback()
+        sort_by_data = request.args.get("sort_by_data", "").strip().lower() in ("1", "true", "yes")
+        if sort_by_data and commodities:
+            available = _get_available_crops_set()
+            def has_data(c):
+                n = normalize_text(c.get("name", ""))
+                if not n:
+                    return False
+                if n in available:
+                    return True
+                for a in available:
+                    if n in a or a in n:
+                        return True
+                return False
+            commodities = sorted(commodities, key=lambda c: (0 if has_data(c) else 1, (c.get("name") or "").lower()))
+        return jsonify({
+            "status": "success",
+            "source": "ceda" if items else "local",
+            "commodities": commodities,
+            "count": len(commodities),
+        })
+    except Exception as e:
+        logger.error(f"Error fetching CEDA commodities: {e}")
+        try:
+            commodities = _get_local_commodities_fallback()
+            return jsonify({
+                "status": "success",
+                "source": "local",
+                "commodities": commodities,
+                "count": len(commodities),
+            })
+        except Exception as e2:
+            logger.error(f"Local fallback failed: {e2}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/agmarket/live', methods=['GET'])
+def agmarket_live():
+    """Proxy for live CEDA Agmarknet / data.gov.in mandi prices. source=api|local."""
+    commodity = request.args.get("commodity", "").strip()
+    source = request.args.get("source", "api").strip().lower()
+    if not commodity:
+        return jsonify({"status": "error", "message": "commodity is required"}), 400
+    records, err = fetch_agmarket_live(commodity, source=source)
+    if source == "local":
+        return jsonify({
+            "status": "success",
+            "source": "local",
+            "live": False,
+            "message": "Using local dataset only.",
+            "records": []
+        })
+    if err == "no_api_key":
+        return jsonify({
+            "status": "success",
+            "source": "backend",
+            "live": False,
+            "message": "Set DATA_GOV_IN_API_KEY or AGMARKET_API_KEY in .env for live Aaj ka bhav.",
+            "records": []
+        })
+    if err and not records:
+        return jsonify({
+            "status": "success",
+            "source": "backend",
+            "live": False,
+            "message": "live prices not found",
+            "records": []
+        })
+    return jsonify({
+        "status": "success",
+        "source": "agmarknet",
+        "live": True,
+        "records": records[:50],
+        "latest_date": records[0]["date"] if records else None
+    })
+
 
 @app.route('/api/seasonal-recommendations/<season>', methods=['GET'])
 def seasonal_recommendations(season):
