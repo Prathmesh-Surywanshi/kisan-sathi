@@ -10,7 +10,7 @@ function Header() {
           <div className="hero-icon">
             <Leaf size={64} color="#2ecc71" />
           </div>
-          <h1>🌾 KAISAN</h1>
+          <h1>🌾 KISAN</h1>
           <p className="hero-subtitle">
             Intelligent Crop Recommendation & Decision Support System
           </p>

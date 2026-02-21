@@ -1,5 +1,5 @@
 """
-KAISAN - Crop Recommendation & Decision Support System
+KISAN - Crop Recommendation & Decision Support System
 Flask Backend API
 """
 

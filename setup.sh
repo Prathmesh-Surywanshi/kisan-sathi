@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# KAISAN Setup Script
+# KISAN Setup Script
 # This script sets up the entire project with backend and frontend
 
-echo "🌾 KAISAN - Crop Recommendation System Setup"
+echo "🌾 KISAN - Crop Recommendation System Setup"
 echo "=============================================="
 echo ""
 
