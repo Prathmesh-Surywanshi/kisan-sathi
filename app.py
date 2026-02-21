@@ -9,10 +9,12 @@ import numpy as np
 import pandas as pd
 import joblib
 import json
+import requests
 from pathlib import Path
 import logging
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestRegressor
+from difflib import SequenceMatcher
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,6 +45,10 @@ SEASON_MONTHS = {
     "winter": [11, 12, 1, 2],
     "spring": [2, 3, 4]
 }
+
+# Weather API Configuration
+WEATHER_API_KEY = "78c72e493fa14a03960131144262102"
+WEATHER_API_BASE = "https://api.weatherapi.com/v1/current.json"
 
 def load_models():
     """Load trained ML models and scalers"""
@@ -240,6 +246,93 @@ def health_check():
         "models": ["crop_classifier", "yield_predictor"]
     })
 
+@app.route('/api/weather', methods=['GET'])
+def get_weather():
+    """
+    Get real-time weather data for a city
+    
+    Query params:
+    - city: City name (required)
+    
+    Returns temperature, humidity, and rainfall data
+    """
+    try:
+        city = request.args.get('city', '').strip()
+        
+        if not city:
+            return jsonify({
+                "status": "error",
+                "message": "City name is required"
+            }), 400
+        
+        # Call WeatherAPI
+        response = requests.get(
+            WEATHER_API_BASE,
+            params={
+                'key': WEATHER_API_KEY,
+                'q': city,
+                'aqi': 'no'
+            },
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            return jsonify({
+                "status": "error",
+                "message": f"City not found: {city}"
+            }), 404
+        
+        weather_data = response.json()
+        current = weather_data.get('current', {})
+        
+        # Extract relevant parameters
+        temperature = current.get('temp_c', 25.0)
+        humidity = current.get('humidity', 70.0)
+        
+        # Estimate rainfall from precipitation (mm)
+        # WeatherAPI provides precip_mm - convert to cm for our model (which expects rainfall in cm)
+        rainfall_mm = current.get('precip_mm', 0.0)
+        rainfall_cm = rainfall_mm / 10.0  # Convert mm to cm
+        
+        # For daily estimation, if no precip data use seasonal average
+        # This is a simple heuristic - could be improved with forecast data
+        if rainfall_cm == 0:
+            rainfall_cm = 15.0  # Default estimate if no rain
+        
+        return jsonify({
+            "status": "success",
+            "city": city,
+            "weather_data": {
+                "temperature": round(temperature, 2),
+                "humidity": round(humidity, 2),
+                "rainfall": round(rainfall_cm, 2),
+                "condition": current.get('condition', {}).get('text', 'Unknown'),
+                "wind_kmh": current.get('wind_kph', 0),
+                "pressure_mb": current.get('pressure_mb', 0),
+                "latitude": weather_data.get('location', {}).get('lat'),
+                "longitude": weather_data.get('location', {}).get('lon')
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    except requests.exceptions.Timeout:
+        return jsonify({
+            "status": "error",
+            "message": "Weather API request timed out"
+        }), 504
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Weather API error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to fetch weather data"
+        }), 500
+    except Exception as e:
+        logger.error(f"Error in weather endpoint: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
 @app.route('/api/crops/list', methods=['GET'])
 def get_crop_list():
     """Get list of all available crops"""
@@ -273,6 +366,113 @@ def get_locations():
         })
     except Exception as e:
         logger.error(f"Error getting locations: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/geo-district', methods=['GET'])
+def get_district_from_coords():
+    """
+    Find best matching district from latitude and longitude
+    Uses reverse geocoding + fuzzy string matching against database
+    
+    Query params:
+    - lat: Latitude (required)
+    - lon: Longitude (required)
+    - state: State name (optional, for narrowing down search)
+    """
+    try:
+        lat = request.args.get('lat', '')
+        lon = request.args.get('lon', '')
+        state = request.args.get('state', '').strip()
+        
+        if not lat or not lon:
+            return jsonify({"status": "error", "message": "Latitude and longitude required"}), 400
+        
+        # Reverse geocode to get district info
+        geo_response = requests.get(
+            f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}",
+            timeout=10
+        )
+        if geo_response.status_code != 200:
+            return jsonify({"status": "error", "message": "Reverse geocoding failed"}), 500
+        
+        geo_data = geo_response.json()
+        address = geo_data.get('address', {})
+        
+        # Extract potential district names from various fields
+        district_candidates = [
+            address.get('county'),
+            address.get('district'),
+            address.get('municipality'),
+            address.get('borough'),
+            address.get('suburb'),
+            address.get('city'),
+            address.get('town'),
+        ]
+        district_candidates = [d for d in district_candidates if d]  # Remove None/empty
+        
+        if location_data is None or location_data.empty:
+            return jsonify({"status": "error", "message": "Location data not available"}), 404
+        
+        # Get list of districts for the state
+        if state:
+            # Normalize state name
+            state_normalized = state.lower().strip()
+            available_districts = location_data[
+                location_data['state_name'].str.lower() == state_normalized
+            ]['dist_name'].dropna().unique().tolist()
+        else:
+            available_districts = location_data['dist_name'].dropna().unique().tolist()
+        
+        # Fuzzy match: find best district match
+        best_match = None
+        best_score = 0.0
+        
+        for candidate in district_candidates:
+            for db_district in available_districts:
+                # Try various matching strategies
+                # 1. Exact match (case-insensitive)
+                if candidate.lower() == db_district.lower():
+                    best_match = db_district
+                    best_score = 1.0
+                    break
+                
+                # 2. Contains match
+                if candidate.lower() in db_district.lower() or db_district.lower() in candidate.lower():
+                    score = 0.9
+                    if score > best_score:
+                        best_match = db_district
+                        best_score = score
+                
+                # 3. Fuzzy match using sequence matcher
+                similarity = SequenceMatcher(None, candidate.lower(), db_district.lower()).ratio()
+                if similarity > best_score:
+                    best_match = db_district
+                    best_score = similarity
+            
+            if best_score >= 0.8:  # Stop if we have a good match
+                break
+        
+        if best_match and best_score >= 0.6:
+            logger.info(f"✓ Detected district: {best_match} (score: {best_score:.2f}) from coords {lat},{lon}")
+            return jsonify({
+                "status": "success",
+                "district": best_match,
+                "confidence": round(best_score * 100, 2),
+                "state": state,
+                "candidate_names": district_candidates[:3]
+            })
+        else:
+            logger.warning(f"⚠ No district match found for coords {lat},{lon}")
+            return jsonify({
+                "status": "no_match",
+                "message": "Could not detect district from coordinates",
+                "candidate_names": district_candidates[:3]
+            }), 200
+    
+    except requests.exceptions.Timeout:
+        return jsonify({"status": "error", "message": "Geocoding request timed out"}), 504
+    except Exception as e:
+        logger.error(f"Error in geo-district: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/soil-data', methods=['GET'])
