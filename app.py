@@ -401,6 +401,7 @@ def recommend_crop():
     """
     try:
         data = request.json
+        logger.info(f"📥 Received crop recommendation request: {data}")
         
         # Validate required fields
         required_fields = ['nitrogen', 'phosphorus', 'potassium', 'temperature', 
@@ -431,6 +432,8 @@ def recommend_crop():
             data.get('water_stress', 50)  # water_stress
         ]])
         
+        logger.info(f"🔢 Feature vector shape: {features.shape}, first 7 features: {features[0][:7]}")
+        
         # Scale features
         features_scaled = feature_scaler.transform(features)
         
@@ -440,6 +443,11 @@ def recommend_crop():
         
         # Get top recommendations
         top_indices = np.argsort(probabilities)[-5:][::-1]
+        
+        logger.info(f"🎯 Top 5 prediction indices: {top_indices}")
+        logger.info(f"🌾 Top 5 crops: {[crop_names[i] for i in top_indices]}")
+        logger.info(f"📊 Top 5 probabilities: {[round(probabilities[i]*100, 2) for i in top_indices]}")
+        
         recommendations = []
         
         for idx in top_indices:
@@ -455,6 +463,8 @@ def recommend_crop():
                 "estimated_yield": round(float(yield_pred), 2),
                 "unit": "kg/ha"
             })
+        
+        logger.info(f"✅ Returning primary recommendation: {recommendations[0]['crop']}")
         
         return jsonify({
             "status": "success",
