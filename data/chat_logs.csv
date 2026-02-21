@@ -1,0 +1,59 @@
+timestamp,sender,intent,user_message,bot_response
+2026-02-21T15:01:09.770367,919172014025,unknown,Hii,"🌾 Welcome to KISAN!
+
+Send:
+1️⃣ recommend
+2️⃣ market <crop> (example: market rice)
+3️⃣ forecast <crop>
+4️⃣ season <rainy|summer|winter|spring>
+5️⃣ help"
+2026-02-21T15:01:23.986549,919172014025,recommend,recommend,"🌾 Please send your location in this format:
+State | District
+
+Example:
+Maharashtra | Pune"
+2026-02-21T15:01:44.826820,919172014025,market,market,Invalid format. Please send: State | District (example: Maharashtra | Pune)
+2026-02-21T15:01:54.376326,919172014025,market,Market,Invalid format. Please send: State | District (example: Maharashtra | Pune)
+2026-02-21T15:02:08.503950,919172014025,unknown,Maharashtra | Pune,"📍 Location: Maharashtra, Pune
+🌾 Recommended Crop: muskmelon
+✅ Confidence: 22.0%
+
+🌦 Estimated Climate: 25.62°C, 71.48% humidity, 3.12 mm rainfall
+🧪 Soil Profile Source Crop: rice
+
+Top Suggestions:
+- muskmelon (22.0%)
+- chickpea (19.67%)
+- grapes (10.5%)"
+2026-02-21T15:02:17.436825,919172014025,unknown,Hi,"🌾 Welcome to KISAN!
+
+Send:
+1️⃣ recommend
+2️⃣ market <crop> (example: market rice)
+3️⃣ forecast <crop>
+4️⃣ season <rainy|summer|winter|spring>
+5️⃣ help"
+2026-02-21T15:02:23.382124,919172014025,market,market,Please provide crop name. Example: market rice
+2026-02-21T15:02:44.658474,919172014025,market,market grapes,No market data found for Grapes.
+2026-02-21T15:02:55.220868,919172014025,market,market chickpea,No market data found for Chickpea.
+2026-02-21T15:03:08.443948,919172014025,market,Market muskmelon,No market data found for Muskmelon.
+2026-02-21T15:03:23.654624,919172014025,forecast,forecast muskmelon,No forecast data found for Muskmelon.
+2026-02-21T15:03:33.168267,919172014025,season,season summer,"📅 Seasonal Recommendation (Summer)
+Top crops:
+- Potato
+- Onion
+- Tomato
+- Wheat
+- Rice
+
+Why: Top commodities in summer based on available market records"
+2026-02-21T15:03:45.414401,919172014025,season,season,Please provide season. Example: season rainy
+2026-02-21T15:03:55.062859,919172014025,season,season rsiny,"Invalid season. Use rainy, summer, winter, or spring."
+2026-02-21T15:04:01.562336,919172014025,unknown,Hii,"🌾 Welcome to KISAN!
+
+Send:
+1️⃣ recommend
+2️⃣ market <crop> (example: market rice)
+3️⃣ forecast <crop>
+4️⃣ season <rainy|summer|winter|spring>
+5️⃣ help"

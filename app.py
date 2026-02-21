@@ -1,5 +1,5 @@
 """
-KAISAN - Crop Recommendation & Decision Support System
+KISAN - Crop Recommendation & Decision Support System
 Flask Backend API
 """
 
@@ -14,6 +14,8 @@ import requests
 from pathlib import Path
 import logging
 from datetime import datetime, timedelta
+from urllib.parse import quote_plus
+import csv
 from sklearn.ensemble import RandomForestRegressor
 
 # Configure logging
@@ -38,6 +40,40 @@ market_prices = None
 market_model_cache = {}
 location_data = None
 soil_defaults = None
+weather_state_data = None
+user_sessions = {}
+CHAT_LOG_FILE = Path("data/chat_logs.csv")
+
+SUPPORTED_SEASONS = {"summer", "rainy", "winter", "spring"}
+MARKET_INTENT_KEYWORDS = {
+    "market", "price", "rates", "rate", "भाव", "भाऊ", "भावा", "बाजार", "मार्केट"
+}
+FORECAST_INTENT_KEYWORDS = {
+    "forecast", "prediction", "predict", "अंदाज", "पूर्वानुमान", "भविष्य", "भविष्यवाणी"
+}
+SEASON_INTENT_KEYWORDS = {
+    "season", "मौसम", "हंगाम", "seasonal"
+}
+RECOMMEND_INTENT_KEYWORDS = {
+    "recommend", "suggest", "सलाह", "सुझाव", "शिफारस", "recommendation"
+}
+
+CROP_TRANSLATION_MAP = {
+    "चावल": "rice",
+    "भात": "rice",
+    "तांदूळ": "rice",
+    "गेहूं": "wheat",
+    "गहू": "wheat",
+    "मक्का": "maize",
+    "मका": "maize",
+    "कापूस": "cotton",
+    "कपास": "cotton",
+    "चना": "chickpea",
+    "हरभरा": "chickpea",
+    "मूंग": "mungbean",
+    "उड़द": "blackgram",
+    "उडीद": "blackgram"
+}
 
 # WhatsApp Cloud API config (set these as environment variables)
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "my_verify_token_123")
@@ -58,7 +94,7 @@ SEASON_MONTHS = {
 
 def load_models():
     """Load trained ML models and scalers"""
-    global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices, location_data, soil_defaults
+    global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices, location_data, soil_defaults, weather_state_data
     
     try:
         logger.info("Loading models...")
@@ -122,10 +158,28 @@ def load_models():
         # Load soil defaults from crop recommendation data
         try:
             soil_defaults = pd.read_csv(PROCESSED_DATA_DIR / "cleaned_Crop_recommendation.csv")
+            if 'label' in soil_defaults.columns:
+                soil_defaults['label'] = soil_defaults['label'].astype(str).str.strip().str.lower()
             logger.info(f"✓ Soil defaults loaded: {soil_defaults.shape[0]} samples")
         except Exception as e:
             logger.warning(f"Could not load soil defaults: {e}")
             soil_defaults = None
+
+        # Load state-level rainfall data for weather defaults
+        try:
+            weather_state_data = pd.read_csv(
+                PROCESSED_DATA_DIR / "cleaned_daily-rainfall-at-state-level.csv",
+                usecols=["state_name", "actual", "normal", "date"],
+                low_memory=False
+            )
+            weather_state_data["state_name"] = weather_state_data["state_name"].astype(str).str.strip().str.lower()
+            weather_state_data["actual"] = pd.to_numeric(weather_state_data["actual"], errors="coerce")
+            weather_state_data["normal"] = pd.to_numeric(weather_state_data["normal"], errors="coerce")
+            weather_state_data["date"] = pd.to_datetime(weather_state_data["date"], errors="coerce")
+            logger.info(f"✓ Weather data loaded: {weather_state_data.shape[0]} records")
+        except Exception as e:
+            logger.warning(f"Could not load weather data: {e}")
+            weather_state_data = None
         
         logger.info("✓ All models loaded successfully!")
         return True
@@ -137,6 +191,319 @@ def normalize_text(value: str) -> str:
     if value is None:
         return ""
     return str(value).strip().lower()
+
+def _log_chat_interaction(sender: str, user_message: str, bot_response: str, intent: str = "unknown"):
+    try:
+        CHAT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        new_file = not CHAT_LOG_FILE.exists()
+        with CHAT_LOG_FILE.open("a", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            if new_file:
+                writer.writerow(["timestamp", "sender", "intent", "user_message", "bot_response"])
+            writer.writerow([
+                datetime.now().isoformat(),
+                sender or "unknown",
+                intent,
+                user_message,
+                bot_response
+            ])
+    except Exception as e:
+        logger.warning(f"Failed to log chat interaction: {e}")
+
+def _get_known_crops():
+    known = set()
+    if encoders_info and "target_encoder" in encoders_info:
+        known.update([normalize_text(c) for c in encoders_info["target_encoder"].get("classes", [])])
+    if market_prices is not None and not market_prices.empty and "commodity" in market_prices.columns:
+        known.update([normalize_text(c) for c in market_prices["commodity"].dropna().unique().tolist()])
+    known.update(CROP_TRANSLATION_MAP.values())
+    return known
+
+def _normalize_farmer_text(text: str):
+    normalized = normalize_text(text)
+    for source, target in CROP_TRANSLATION_MAP.items():
+        normalized = normalized.replace(normalize_text(source), target)
+    return normalized
+
+def _extract_crop_from_text(text: str):
+    known_crops = sorted(_get_known_crops(), key=len, reverse=True)
+    for crop in known_crops:
+        if crop and crop in text:
+            return crop
+    return None
+
+def _extract_season_from_text(text: str):
+    for season in SUPPORTED_SEASONS:
+        if season in text:
+            return season
+    if "rain" in text or "monsoon" in text or "बरसात" in text or "पावस" in text:
+        return "rainy"
+    return None
+
+def _detect_intent(text: str):
+    tokens = set(text.split())
+    if text.startswith("market") or tokens.intersection(MARKET_INTENT_KEYWORDS):
+        return "market"
+    if text.startswith("forecast") or tokens.intersection(FORECAST_INTENT_KEYWORDS):
+        return "forecast"
+    if text.startswith("season") or tokens.intersection(SEASON_INTENT_KEYWORDS):
+        return "season"
+    if text.startswith("recommend") or tokens.intersection(RECOMMEND_INTENT_KEYWORDS):
+        return "recommend"
+    return "unknown"
+
+def send_whatsapp_menu(to: str) -> bool:
+    if not WHATSAPP_ACCESS_TOKEN or not GRAPH_API_URL:
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": "Choose an option"},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": "recommend", "title": "🌾 Recommend"}},
+                    {"type": "reply", "reply": {"id": "market", "title": "📊 Market"}},
+                    {"type": "reply", "reply": {"id": "season", "title": "📅 Season"}}
+                ]
+            }
+        }
+    }
+
+    try:
+        response = requests.post(GRAPH_API_URL, headers=headers, json=payload, timeout=15)
+        return response.ok
+    except requests.RequestException:
+        return False
+
+def _normalize_crop_label_from_column(column_name: str):
+    base = column_name.replace("_production_(1000_tons)", "")
+    alias_map = {
+        "pigeonpea": "pigeonpeas",
+        "black_gram": "blackgram",
+        "mung": "mungbean"
+    }
+    return alias_map.get(base, base)
+
+def _infer_dominant_crop_label(state: str, district: str = ""):
+    if location_data is None or location_data.empty:
+        return None
+
+    if 'state_name' not in location_data.columns or 'dist_name' not in location_data.columns:
+        return None
+
+    state_key = normalize_text(state)
+    district_key = normalize_text(district)
+
+    working = location_data.copy()
+    working['state_name_norm'] = working['state_name'].astype(str).str.strip().str.lower()
+    working['dist_name_norm'] = working['dist_name'].astype(str).str.strip().str.lower()
+
+    district_rows = working[
+        (working['state_name_norm'] == state_key) &
+        (working['dist_name_norm'] == district_key)
+    ] if district_key else pd.DataFrame()
+
+    state_rows = working[working['state_name_norm'] == state_key]
+    selected = district_rows if not district_rows.empty else state_rows
+    if selected.empty:
+        return None
+
+    valid_labels = set()
+    if soil_defaults is not None and not soil_defaults.empty and 'label' in soil_defaults.columns:
+        valid_labels = set(soil_defaults['label'].astype(str).str.lower().unique().tolist())
+
+    production_cols = [col for col in selected.columns if col.endswith("_production_(1000_tons)")]
+    best_crop = None
+    best_value = -1.0
+
+    for col in production_cols:
+        crop_label = _normalize_crop_label_from_column(col)
+        if valid_labels and crop_label not in valid_labels:
+            continue
+
+        values = pd.to_numeric(selected[col], errors='coerce')
+        mean_value = values[values > 0].mean()
+        if pd.notna(mean_value) and float(mean_value) > best_value:
+            best_value = float(mean_value)
+            best_crop = crop_label
+
+    return best_crop
+
+def _resolve_soil_parameters(state: str, district: str = ""):
+    """Resolve location-based soil parameters from local dataset defaults."""
+    if not state:
+        raise ValueError("State is required")
+
+    if soil_defaults is None or soil_defaults.empty:
+        raise RuntimeError("Soil data not available")
+
+    state_key = normalize_text(state)
+    district_key = normalize_text(district)
+
+    if location_data is not None and not location_data.empty and 'state_name' in location_data.columns:
+        state_catalog = set(location_data['state_name'].astype(str).str.strip().str.lower().unique().tolist())
+        if state_catalog and state_key not in state_catalog:
+            raise ValueError(f"State '{state}' is not available")
+
+    dominant_crop = _infer_dominant_crop_label(state, district)
+    base_df = soil_defaults
+    if dominant_crop and 'label' in soil_defaults.columns:
+        crop_df = soil_defaults[soil_defaults['label'] == dominant_crop]
+        if not crop_df.empty:
+            base_df = crop_df
+
+    n_avg = float(base_df['n'].mean())
+    p_avg = float(base_df['p'].mean())
+    k_avg = float(base_df['k'].mean())
+    ph_avg = float(base_df['ph'].mean())
+
+    return {
+        'nitrogen': round(n_avg, 2),
+        'phosphorus': round(p_avg, 2),
+        'potassium': round(k_avg, 2),
+        'ph': round(ph_avg, 2),
+        'state': state,
+        'district': district,
+        'dominant_crop_profile': dominant_crop,
+        'data_source': 'cleaned_Crop_recommendation + cleaned_ICRISAT-District Level Data'
+    }
+
+def _resolve_weather_data(state: str, district: str = ""):
+    """Resolve weather defaults from datasets (state rainfall + agronomy baseline)."""
+    if not state:
+        raise ValueError("State is required")
+
+    if soil_defaults is None or soil_defaults.empty:
+        raise RuntimeError("Base climate data not available")
+
+    state_key = normalize_text(state)
+    rainfall = None
+
+    if weather_state_data is not None and not weather_state_data.empty:
+        state_weather = weather_state_data[weather_state_data['state_name'] == state_key]
+        if not state_weather.empty:
+            normal_series = pd.to_numeric(state_weather['normal'], errors='coerce')
+            normal_series = normal_series[normal_series > 0]
+            actual_series = pd.to_numeric(state_weather['actual'], errors='coerce')
+            actual_series = actual_series[actual_series > 0]
+
+            if not normal_series.empty:
+                rainfall = float(normal_series.mean())
+            elif not actual_series.empty:
+                rainfall = float(actual_series.mean())
+
+    if rainfall is None:
+        rainfall = float(pd.to_numeric(soil_defaults['rainfall'], errors='coerce').dropna().mean())
+
+    temperature = float(pd.to_numeric(soil_defaults['temperature'], errors='coerce').dropna().mean())
+    humidity = float(pd.to_numeric(soil_defaults['humidity'], errors='coerce').dropna().mean())
+
+    return {
+        "temperature": round(temperature, 2),
+        "humidity": round(humidity, 2),
+        "rainfall": round(rainfall, 2),
+        "state": state,
+        "district": district,
+        "data_source": "cleaned_daily-rainfall-at-state-level + cleaned_Crop_recommendation"
+    }
+
+def _run_crop_recommendation_logic(data: dict):
+    """Core recommendation logic shared by API routes and WhatsApp flow."""
+    required_fields = ['nitrogen', 'phosphorus', 'potassium', 'temperature', 'humidity', 'ph', 'rainfall']
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        raise ValueError(f"Missing fields: {', '.join(missing_fields)}")
+
+    if crop_classifier is None or yield_predictor is None or feature_scaler is None or encoders_info is None:
+        raise RuntimeError("Model artifacts are not loaded")
+
+    features = np.array([[ 
+        data['nitrogen'],
+        data['phosphorus'],
+        data['potassium'],
+        data['temperature'],
+        data['humidity'],
+        data['ph'],
+        data['rainfall'],
+        data.get('rainfall_deviation_pct', 10),
+        data.get('npk_score', (data['nitrogen'] + data['phosphorus'] + data['potassium']) / 3),
+        data.get('temp_favorability', data['temperature'] / 30),
+        data.get('humidity_favorability', data['humidity'] / 100),
+        data.get('ph_suitability', 1 - abs(data['ph'] - 7) / 7),
+        data.get('growth_potential', 0.5),
+        data.get('water_stress', 50)
+    ]])
+
+    features_scaled = feature_scaler.transform(features)
+    probabilities = crop_classifier.predict_proba(features_scaled)[0]
+    crop_names = encoders_info['target_encoder']['classes']
+
+    top_indices = np.argsort(probabilities)[-5:][::-1]
+    recommendations = []
+
+    for idx in top_indices:
+        crop = crop_names[idx]
+        confidence = float(probabilities[idx]) * 100
+        yield_pred = yield_predictor.predict(features_scaled)[0]
+        recommendations.append({
+            "crop": crop,
+            "confidence": round(confidence, 2),
+            "estimated_yield": round(float(yield_pred), 2),
+            "unit": "kg/ha"
+        })
+
+    return {
+        "status": "success",
+        "primary_recommendation": recommendations[0]['crop'],
+        "confidence": recommendations[0]['confidence'],
+        "top_recommendations": recommendations,
+        "input_conditions": {
+            "nitrogen": data['nitrogen'],
+            "phosphorus": data['phosphorus'],
+            "potassium": data['potassium'],
+            "temperature": data['temperature'],
+            "humidity": data['humidity'],
+            "ph": data['ph'],
+            "rainfall": data['rainfall']
+        }
+    }
+
+def _build_recommendation_payload_from_location(state: str, district: str):
+    soil_data = _resolve_soil_parameters(state, district)
+    weather_data = _resolve_weather_data(state, district)
+
+    payload = {
+        "nitrogen": soil_data["nitrogen"],
+        "phosphorus": soil_data["phosphorus"],
+        "potassium": soil_data["potassium"],
+        "temperature": weather_data["temperature"],
+        "humidity": weather_data["humidity"],
+        "ph": soil_data["ph"],
+        "rainfall": weather_data["rainfall"]
+    }
+    return payload, soil_data, weather_data
+
+def _run_location_recommendation_logic(state: str, district: str):
+    payload, soil_data, weather_data = _build_recommendation_payload_from_location(state, district)
+    recommendation = _run_crop_recommendation_logic(payload)
+    return {
+        "status": "success",
+        "location": {
+            "state": state,
+            "district": district
+        },
+        "soil_data": soil_data,
+        "weather_data": weather_data,
+        "recommendation": recommendation
+    }
 
 def send_whatsapp_message(to: str, message: str) -> bool:
     """Send a WhatsApp text message via Meta Graph API"""
@@ -167,52 +534,254 @@ def send_whatsapp_message(to: str, message: str) -> bool:
         logger.error(f"WhatsApp send exception: {e}")
         return False
 
-def process_user_message(message: str) -> str:
-    """Basic WhatsApp message processing"""
+def _get_user_session(sender: str):
+    key = normalize_text(sender)
+    if key not in user_sessions:
+        user_sessions[key] = {
+            "step": None
+        }
+    return user_sessions[key]
+
+def _parse_location_input(message: str):
+    parts = [item.strip() for item in message.split("|")]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return {
+        "state": parts[0],
+        "district": parts[1]
+    }
+
+def _parse_market_command(text: str):
+    body = text.split(maxsplit=1)
+    if len(body) < 2 or not body[1].strip():
+        return None
+
+    # Supported format:
+    # market <crop>
+    # market <crop> | <state> | <district> | <market>
+    segments = [seg.strip() for seg in body[1].split("|") if seg.strip()]
+    if not segments:
+        return None
+
+    return {
+        "crop": segments[0],
+        "state": segments[1] if len(segments) > 1 else None,
+        "district": segments[2] if len(segments) > 2 else None,
+        "market": segments[3] if len(segments) > 3 else None
+    }
+
+def _best_selling_window(trend: str):
+    if trend == "high":
+        return "Next 15 days"
+    if trend == "moderate":
+        return "Monitor next 20-30 days"
+    return "Sell within 7-10 days"
+
+def _format_market_summary(crop: str, data: dict):
+    market_data = data.get("market_data", {})
+    latest = market_data.get("latest_price", {})
+    risk_assessment = data.get("risk_assessment", {})
+    trend = market_data.get("demand_trend", "N/A")
+    selling_window = _best_selling_window(trend)
+
+    return (
+        f"📊 {crop.title()} Market Summary\n"
+        f"💰 Price: ₹{latest.get('value', 'N/A')}\n"
+        f"📈 Trend: {trend}\n"
+        f"⚠ Risk: {risk_assessment.get('market_risk', 'N/A').title()}\n"
+        f"📅 Best selling window: {selling_window}"
+    )
+
+def _format_forecast_summary(crop: str, data: dict):
+    forecast = data.get("market_data", {}).get("forecast_30d", {})
+    trend = data.get("market_data", {}).get("demand_trend", "N/A")
+
+    return (
+        f"📈 30-Day Forecast for {crop.title()}\n"
+        f"Avg: ₹{forecast.get('avg', 'N/A')}\n"
+        f"Min: ₹{forecast.get('min', 'N/A')}\n"
+        f"Max: ₹{forecast.get('max', 'N/A')}\n"
+        f"Trend: {trend}"
+    )
+
+def process_user_message(message: str, sender: str = None) -> str:
+    """WhatsApp message processing with stateful recommendation flow."""
     if not message:
         return "Please send a message. Type 'help' for options."
 
-    text = normalize_text(message)
+    text = _normalize_farmer_text(message)
+    session = _get_user_session(sender or "unknown")
+    intent = _detect_intent(text)
 
     if text in {"hi", "hello", "hey", "hii"}:
+        session["step"] = None
         return (
-            "🌾 Welcome to KAISAN!\n\n"
-            "Send one of these:\n"
-            "1) recommend\n"
-            "2) market <crop> (example: market rice)\n"
-            "3) help"
+            "🌾 Welcome to KISAN!\n\n"
+            "Send:\n"
+            "1️⃣ recommend\n"
+            "2️⃣ market <crop> (example: market rice)\n"
+            "3️⃣ forecast <crop>\n"
+            "4️⃣ season <rainy|summer|winter|spring>\n"
+            "5️⃣ help"
         )
 
     if text == "help":
         return (
-            "Commands:\n"
+            "📘 Commands:\n"
             "- recommend\n"
             "- market <crop>\n"
-            "Example: market wheat"
+            "- market <crop> | <state> | <district> | <market>\n"
+            "- forecast <crop>\n"
+            "- season <rainy|summer|winter|spring>\n"
+            "\nExample:\n"
+            "recommend\n"
+            "Maharashtra | Pune\n\n"
+            "market rice\n"
+            "market rice | maharashtra | pune | pune market\n"
+            "forecast rice\n"
+            "season rainy"
         )
 
-    if text == "recommend":
+    if text == "recommend" or intent == "recommend":
+        session["step"] = "awaiting_location"
         return (
-            "Please use the KAISAN web app for full crop recommendation:\n"
-            "http://localhost:3000/recommend"
+            "🌾 Please send your location in this format:\n"
+            "State | District\n\n"
+            "Example:\n"
+            "Maharashtra | Pune"
         )
 
-    if text.startswith("market"):
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            return "Please provide crop name. Example: market wheat"
+    if session.get("step") == "awaiting_location":
+        location = _parse_location_input(message)
+        if not location:
+            return "Invalid format. Please send: State | District (example: Maharashtra | Pune)"
 
-        crop = parts[1].strip()
-        crop_data = filter_market_prices(crop)
-        if crop_data.empty:
-            return f"No market price data found for {crop.title()} right now."
+        try:
+            location_result = _run_location_recommendation_logic(location["state"], location["district"])
+            recommendation = location_result["recommendation"]
+            soil_data = location_result["soil_data"]
+            weather_data = location_result["weather_data"]
 
-        latest = crop_data.sort_values("price_date").iloc[-1]
-        return (
-            f"📊 {crop.title()} market update:\n"
-            f"Latest price: ₹{float(latest['modal_price']):.2f} per quintal\n"
-            f"Date: {latest['price_date'].strftime('%Y-%m-%d')}"
-        )
+            top_crop = recommendation["primary_recommendation"]
+            confidence = recommendation["confidence"]
+            top_recommendations = recommendation["top_recommendations"][:3]
+            top_lines = "\n".join(
+                [f"- {item.get('crop', 'N/A')} ({item.get('confidence', 0)}%)" for item in top_recommendations]
+            )
+
+            session["step"] = None
+            return (
+                f"📍 Location: {location['state']}, {location['district']}\n"
+                f"🌾 Recommended Crop: {top_crop}\n"
+                f"✅ Confidence: {confidence}%\n\n"
+                f"🌦 Estimated Climate: {weather_data['temperature']}°C, {weather_data['humidity']}% humidity, {weather_data['rainfall']} mm rainfall\n"
+                f"🧪 Soil Profile Source Crop: {soil_data.get('dominant_crop_profile') or 'general'}\n\n"
+                f"Top Suggestions:\n{top_lines}"
+            )
+        except ValueError as e:
+            logger.warning(f"Invalid location recommendation input: {e}")
+            return f"⚠ {e}. Please send: State | District"
+        except RuntimeError as e:
+            logger.error(f"Location-based recommendation unavailable: {e}")
+            return "⚠ Recommendation service is not ready right now. Please try again soon."
+        except Exception as e:
+            logger.error(f"Error in WhatsApp recommendation flow: {e}")
+            return "⚠ Unable to process recommendation currently. Please try again later."
+
+    market_like = text.startswith("market") or intent == "market"
+    if market_like:
+        parsed_market = _parse_market_command(text)
+        if not parsed_market:
+            crop = _extract_crop_from_text(text)
+            if not crop:
+                return "Please provide crop name. Example: market rice"
+            parsed_market = {
+                "crop": crop,
+                "state": None,
+                "district": None,
+                "market": None
+            }
+
+        crop = parsed_market["crop"]
+        query_parts = []
+        if parsed_market["state"]:
+            query_parts.append(f"state={quote_plus(parsed_market['state'])}")
+        if parsed_market["district"]:
+            query_parts.append(f"district={quote_plus(parsed_market['district'])}")
+        if parsed_market["market"]:
+            query_parts.append(f"market={quote_plus(parsed_market['market'])}")
+
+        query = "&".join(query_parts)
+        endpoint = f"/api/market-insights/{quote_plus(crop)}"
+        if query:
+            endpoint = f"{endpoint}?{query}"
+
+        try:
+            with app.test_client() as client:
+                response = client.get(endpoint)
+                data = response.get_json() or {}
+
+            if response.status_code != 200 or data.get("status") != "success":
+                return "⚠ Unable to fetch market insights right now. Please try again."
+
+            if not data.get("has_market_data"):
+                return f"No market data found for {crop.title()}."
+
+            return _format_market_summary(crop, data)
+        except Exception as e:
+            logger.error(f"Error in WhatsApp market flow: {e}")
+            return "⚠ Unable to process market query currently. Please try again later."
+
+    forecast_like = text.startswith("forecast") or intent == "forecast"
+    if forecast_like:
+        crop = text.split(maxsplit=1)[1].strip() if text.startswith("forecast") and len(text.split(maxsplit=1)) > 1 else _extract_crop_from_text(text)
+        if not crop:
+            return "Please provide crop name. Example: forecast rice"
+
+        try:
+            with app.test_client() as client:
+                response = client.get(f"/api/market-insights/{quote_plus(crop)}")
+                data = response.get_json() or {}
+
+            if response.status_code != 200 or data.get("status") != "success" or not data.get("has_market_data"):
+                return f"No forecast data found for {crop.title()}."
+
+            return _format_forecast_summary(crop, data)
+        except Exception as e:
+            logger.error(f"Error in WhatsApp forecast flow: {e}")
+            return "⚠ Unable to process forecast query right now."
+
+    season_like = text.startswith("season") or intent == "season"
+    if season_like:
+        season = text.split(maxsplit=1)[1].strip() if text.startswith("season") and len(text.split(maxsplit=1)) > 1 else _extract_season_from_text(text)
+        if not season:
+            return "Please provide season. Example: season rainy"
+
+        season = normalize_text(season)
+        if season not in SUPPORTED_SEASONS:
+            return "Invalid season. Use rainy, summer, winter, or spring."
+
+        try:
+            with app.test_client() as client:
+                response = client.get(f"/api/seasonal-recommendations/{quote_plus(season)}")
+                data = response.get_json() or {}
+
+            if response.status_code != 200 or data.get("status") != "success":
+                return "⚠ Unable to fetch seasonal recommendations right now."
+
+            crops = data.get("recommended_crops", [])[:5]
+            if not crops:
+                return f"No crops found for {season} season."
+
+            crops_text = "\n".join([f"- {crop}" for crop in crops])
+            return (
+                f"📅 Seasonal Recommendation ({season.title()})\n"
+                f"Top crops:\n{crops_text}\n\n"
+                f"Why: {data.get('reason', 'Based on market records')}"
+            )
+        except Exception as e:
+            logger.error(f"Error in WhatsApp season flow: {e}")
+            return "⚠ Unable to process season query right now."
 
     return "I did not understand. Type 'help'."
 
@@ -243,9 +812,21 @@ def whatsapp_webhook():
                 for msg in messages:
                     sender = msg.get("from")
                     text_body = msg.get("text", {}).get("body", "")
+                    if not text_body and msg.get("interactive"):
+                        interactive = msg.get("interactive", {})
+                        if interactive.get("button_reply"):
+                            text_body = interactive.get("button_reply", {}).get("id", "")
+                        elif interactive.get("list_reply"):
+                            text_body = interactive.get("list_reply", {}).get("id", "")
+
                     if sender and text_body:
-                        reply_text = process_user_message(text_body)
+                        reply_text = process_user_message(text_body, sender=sender)
                         send_whatsapp_message(sender, reply_text)
+                        _log_chat_interaction(sender, text_body, reply_text, intent=_detect_intent(_normalize_farmer_text(text_body)))
+
+                        normalized = _normalize_farmer_text(text_body)
+                        if normalized in {"hi", "hello", "hey", "hii", "help", "menu"}:
+                            send_whatsapp_menu(sender)
     except Exception as e:
         logger.error(f"Error processing WhatsApp webhook: {e}")
 
@@ -406,54 +987,63 @@ def get_soil_data():
     try:
         state = request.args.get('state', '').strip()
         district = request.args.get('district', '').strip()
-        
-        if not state:
-            return jsonify({"status": "error", "message": "State is required"}), 400
-        
-        # Use soil defaults from crop recommendation data (averaged values)
-        if soil_defaults is None or soil_defaults.empty:
-            return jsonify({
-                "status": "error",
-                "message": "Soil data not available"
-            }), 404
-        
-        # Get average NPK and pH values from the dataset
-        # For now, provide typical values - in production, this could be location-specific
-        n_avg = float(soil_defaults['n'].mean())
-        p_avg = float(soil_defaults['p'].mean())
-        k_avg = float(soil_defaults['k'].mean())
-        ph_avg = float(soil_defaults['ph'].mean())
-        
-        # Add some variation based on state (simplified approach)
-        state_variations = {
-            'punjab': {'n': 1.1, 'p': 1.0, 'k': 0.9, 'ph': 1.0},
-            'haryana': {'n': 1.1, 'p': 1.0, 'k': 0.9, 'ph': 1.0},
-            'uttar pradesh': {'n': 1.0, 'p': 0.95, 'k': 1.0, 'ph': 1.0},
-            'maharashtra': {'n': 0.9, 'p': 1.0, 'k': 1.1, 'ph': 0.98},
-            'karnataka': {'n': 0.95, 'p': 1.05, 'k': 1.0, 'ph': 0.99},
-            'tamil nadu': {'n': 0.9, 'p': 1.1, 'k': 1.0, 'ph': 0.97},
-        }
-        
-        state_key = normalize_text(state)
-        variation = state_variations.get(state_key, {'n': 1.0, 'p': 1.0, 'k': 1.0, 'ph': 1.0})
-        
-        soil_params = {
-            'nitrogen': round(n_avg * variation['n'], 2),
-            'phosphorus': round(p_avg * variation['p'], 2),
-            'potassium': round(k_avg * variation['k'], 2),
-            'ph': round(ph_avg * variation['ph'], 2),
-            'state': state,
-            'district': district,
-            'data_source': 'aggregated_crop_data'
-        }
+        soil_params = _resolve_soil_parameters(state, district)
         
         return jsonify({
             "status": "success",
             "soil_data": soil_params,
             "message": f"Average soil data for {state}"
         })
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"status": "error", "message": str(e)}), 404
     except Exception as e:
         logger.error(f"Error getting soil data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/weather-data', methods=['GET'])
+def get_weather_data():
+    """Get weather defaults based on selected state/district from loaded datasets."""
+    try:
+        state = request.args.get('state', '').strip()
+        district = request.args.get('district', '').strip()
+        weather = _resolve_weather_data(state, district)
+
+        return jsonify({
+            "status": "success",
+            "weather_data": weather,
+            "message": f"Weather defaults resolved for {state}"
+        })
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"status": "error", "message": str(e)}), 404
+    except Exception as e:
+        logger.error(f"Error getting weather data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/recommend-by-location', methods=['POST'])
+def recommend_by_location():
+    """Resolve soil+weather from location and run crop recommendation in one call."""
+    try:
+        data = request.json or {}
+        state = str(data.get('state', '')).strip()
+        district = str(data.get('district', '')).strip()
+
+        if not state:
+            return jsonify({"status": "error", "message": "State is required"}), 400
+        if not district:
+            return jsonify({"status": "error", "message": "District is required"}), 400
+
+        result = _run_location_recommendation_logic(state, district)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"status": "error", "message": str(e)}), 503
+    except Exception as e:
+        logger.error(f"Error in location recommendation: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/testing-centers', methods=['GET'])
@@ -525,78 +1115,19 @@ def recommend_crop():
     }
     """
     try:
-        data = request.json
-        
-        # Validate required fields
-        required_fields = ['nitrogen', 'phosphorus', 'potassium', 'temperature', 
-                         'humidity', 'ph', 'rainfall']
-        missing_fields = [f for f in required_fields if f not in data]
-        
-        if missing_fields:
-            return jsonify({
-                "status": "error",
-                "message": f"Missing fields: {', '.join(missing_fields)}"
-            }), 400
-        
-        # Extract features (must match training order)
-        features = np.array([[
-            data['nitrogen'],      # n
-            data['phosphorus'],    # p
-            data['potassium'],     # k
-            data['temperature'],   # temperature
-            data['humidity'],      # humidity
-            data['ph'],            # ph
-            data['rainfall'],      # rainfall
-            data.get('rainfall_deviation_pct', 10),  # rainfall_deviation_pct
-            data.get('npk_score', (data['nitrogen'] + data['phosphorus'] + data['potassium']) / 3),  # npk_score
-            data.get('temp_favorability', data['temperature'] / 30),  # temp_favorability
-            data.get('humidity_favorability', data['humidity'] / 100),  # humidity_favorability
-            data.get('ph_suitability', 1 - abs(data['ph'] - 7) / 7),  # ph_suitability
-            data.get('growth_potential', 0.5),  # growth_potential
-            data.get('water_stress', 50)  # water_stress
-        ]])
-        
-        # Scale features
-        features_scaled = feature_scaler.transform(features)
-        
-        # Get probabilities for all crops
-        probabilities = crop_classifier.predict_proba(features_scaled)[0]
-        crop_names = encoders_info['target_encoder']['classes']
-        
-        # Get top recommendations
-        top_indices = np.argsort(probabilities)[-5:][::-1]
-        recommendations = []
-        
-        for idx in top_indices:
-            crop = crop_names[idx]
-            confidence = float(probabilities[idx]) * 100
-            
-            # Get yield prediction for this crop
-            yield_pred = yield_predictor.predict(features_scaled)[0]
-            
-            recommendations.append({
-                "crop": crop,
-                "confidence": round(confidence, 2),
-                "estimated_yield": round(float(yield_pred), 2),
-                "unit": "kg/ha"
-            })
-        
+        data = request.json or {}
+        result = _run_crop_recommendation_logic(data)
+        return jsonify(result)
+    except ValueError as e:
         return jsonify({
-            "status": "success",
-            "primary_recommendation": recommendations[0]['crop'],
-            "confidence": recommendations[0]['confidence'],
-            "top_recommendations": recommendations,
-            "input_conditions": {
-                "nitrogen": data['nitrogen'],
-                "phosphorus": data['phosphorus'],
-                "potassium": data['potassium'],
-                "temperature": data['temperature'],
-                "humidity": data['humidity'],
-                "ph": data['ph'],
-                "rainfall": data['rainfall']
-            }
-        })
-    
+            "status": "error",
+            "message": str(e)
+        }), 400
+    except RuntimeError as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 503
     except Exception as e:
         logger.error(f"Error in crop recommendation: {e}")
         return jsonify({
