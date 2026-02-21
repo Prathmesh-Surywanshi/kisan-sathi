@@ -73,7 +73,7 @@ FORECAST_INTENT_KEYWORDS = {
     "forecast", "prediction", "predict", "अंदाज", "पूर्वानुमान", "भविष्य", "भविष्यवाणी"
 }
 SEASON_INTENT_KEYWORDS = {
-    "season", "मौसम", "हंगाम", "seasonal"
+    "season", "मौसम", "हंगाम", "ऋतु", "seasonal"
 }
 RECOMMEND_INTENT_KEYWORDS = {
     "recommend", "suggest", "सलाह", "सुझाव", "शिफारस", "recommendation"
