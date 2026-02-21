@@ -1,18 +1,18 @@
-# KAISAN - Crop Recommendation & Decision Support System
+# KISAN - Crop Recommendation & Decision Support System
 
-![KAISAN Banner](https://img.shields.io/badge/Version-1.0.0-green)
+![KISAN Banner](https://img.shields.io/badge/Version-1.1.0-green)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![React](https://img.shields.io/badge/React-18.2.0-61dafb)
 ![Flask](https://img.shields.io/badge/Flask-2.3.2-black)
 
 ## 🌾 **Project Overview**
 
-KAISAN is an intelligent agricultural decision support system designed to help Indian farmers make data-driven decisions about crop selection. The system recommends the best crops to grow based on:
+KISAN is an intelligent agricultural decision support system designed to help Indian farmers make data-driven decisions about crop selection. The system recommends the best crops to grow based on:
 
 - **Soil Conditions**: Nitrogen (N), Phosphorus (P), Potassium (K) levels
 - **Environmental Factors**: Temperature, humidity, pH, and rainfall
 - **Market Trends**: Local demand, pricing, and global market access
-- **Risk Assessment**: Weather, market, and disease risk analysis
+- **Location Assistance**: State/district-based soil defaults for farmers without lab reports
 - **Seasonal Guidance**: Optimal crops for each season
 
 ### Key Features
@@ -21,6 +21,8 @@ KAISAN is an intelligent agricultural decision support system designed to help I
 ✅ **95% Yield Prediction Accuracy** - Estimated yield predictions  
 ✅ **22 Supported Crops** - Comprehensive coverage of major Indian crops  
 ✅ **Beautiful Farmer-Centric UI** - Mobile-responsive, easy-to-use interface  
+✅ **12-Language Support** - Built-in translation options for Indian users  
+✅ **Location-Based Input Mode** - Auto-fill soil values by state and district  
 ✅ **Market Insights** - Real-time market trends and seasonal recommendations  
 ✅ **Risk Management** - Comprehensive risk assessment for informed decisions  
 ✅ **Real-time Recommendations** - Instant crop suggestions based on input conditions  
@@ -30,14 +32,14 @@ KAISAN is an intelligent agricultural decision support system designed to help I
 ## 🏗️ **System Architecture**
 
 ```
-KAISAN/
-├── backend/
-│   ├── app.py                    # Flask API server
-│   ├── requirements.txt           # Python dependencies
-│   └── data/
-│       ├── models/               # Pre-trained ML models
-│       └── processed/            # Cleaned datasets
-│
+KISAN/
+├── app.py                        # Flask API server
+├── requirements.txt              # Python dependencies
+├── data/
+│   ├── models/                   # Pre-trained ML models + metadata
+│   ├── processed/                # Cleaned/merged datasets
+│   └── kaggel/                   # Raw source datasets
+├── training/                     # Data cleaning, feature engineering, model training scripts
 ├── frontend/
 │   ├── src/
 │   │   ├── components/           # React components
@@ -66,7 +68,7 @@ KAISAN/
 
 ```bash
 git clone <repository-url>
-cd kaisan
+cd kisan
 ```
 
 ### 2️⃣ Setup Backend
@@ -130,6 +132,21 @@ GET /api/health
 ### Get Available Crops
 ```http
 GET /api/crops/list
+```
+
+### Get Locations
+```http
+GET /api/locations
+```
+
+### Get Soil Defaults by Location
+```http
+GET /api/soil-data?state={state}&district={district}
+```
+
+### Get Nearby Soil Testing Centers
+```http
+GET /api/testing-centers?state={state}
 ```
 
 ### Get Crop Recommendations
@@ -216,7 +233,7 @@ GET /api/feature-importance
 - CTA buttons for recommendations and insights
 
 ### 🌾 **Get Recommendations Page**
-- Interactive form for soil and environmental conditions
+- Dual input mode: manual entry or location-based auto-fill
 - Real-time input validation
 - Form sections:
   - Soil Nutrients (NPK)
@@ -297,6 +314,7 @@ apple, banana, blackgram, chickpea, coconut, coffee, cotton, grapes, jute, kidne
 - **Buttons**: Clear CTAs with loading states
 - **Forms**: Validated inputs with error messaging
 - **Charts**: Visualizations for trends and insights
+- **Language Selector**: Navbar translation control for multilingual access
 
 ---
 
@@ -376,14 +394,14 @@ npm run build
 ## 📝 **Project Structure Details**
 
 ### Backend
-- **app.py**: Main Flask application with 9 API endpoints
+- **app.py**: Main Flask application with crop recommendation, market insights, location, and utility APIs
 - **requirements.txt**: All Python dependencies pinned to versions
 - **data/models/**: Pre-trained models (crop_classifier.pkl, yield_predictor.pkl)
 - **data/processed/**: Cleaned datasets for reference
 
 ### Frontend
 - **src/App.jsx**: Main app with routing
-- **src/components/**: Reusable components (Header, Navbar)
+- **src/components/**: Reusable components (Header, Navbar with language selector)
 - **src/pages/**: Routed page components (Home, Recommendation, Results, Market Insights)
 - **src/styles/**: Component-specific CSS with responsive design
 
@@ -439,7 +457,6 @@ For issues, questions, or suggestions:
 ## 🌱 **Future Enhancements**
 
 - [ ] Real-time weather API integration
-- [ ] Multi-language support (Hindi, Tamil, etc.)
 - [ ] Mobile app (React Native)
 - [ ] Advanced analytics dashboard
 - [ ] Farmer community forum
@@ -451,4 +468,4 @@ For issues, questions, or suggestions:
 
 **Happy Farming! 🌾**
 
-*KAISAN - Making Agriculture Intelligent*
+*KISAN - Making Agriculture Intelligent*

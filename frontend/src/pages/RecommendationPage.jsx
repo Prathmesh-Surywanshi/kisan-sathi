@@ -3,6 +3,64 @@ import { Navigate } from 'react-router-dom';
 import { Send, AlertCircle, MapPin, HelpCircle } from 'lucide-react';
 import '../styles/RecommendationPage.css';
 
+// City to State mapping for India
+const CITY_STATE_MAP = {
+  'mumbai': 'maharashtra',
+  'pune': 'maharashtra',
+  'nagpur': 'maharashtra',
+  'aurangabad': 'maharashtra',
+  'delhi': 'delhi',
+  'new delhi': 'delhi',
+  'gurgaon': 'haryana',
+  'noida': 'uttar pradesh',
+  'bangalore': 'karnataka',
+  'bengaluru': 'karnataka',
+  'mysore': 'karnataka',
+  'hyderabad': 'telangana',
+  'secunderabad': 'telangana',
+  'pune': 'maharashtra',
+  'ahmedabad': 'gujarat',
+  'surat': 'gujarat',
+  'vadodara': 'gujarat',
+  'jaipur': 'rajasthan',
+  'udaipur': 'rajasthan',
+  'bhopal': 'madhya pradesh',
+  'kolkata': 'west bengal',
+  'darjeeling': 'west bengal',
+  'lucknow': 'uttar pradesh',
+  'kanpur': 'uttar pradesh',
+  'varanasi': 'uttar pradesh',
+  'amritsar': 'punjab',
+  'ludhiana': 'punjab',
+  'chandigarh': 'haryana',
+  'indore': 'madhya pradesh',
+  'nagpur': 'maharashtra',
+  'thiruvananthapuram': 'kerala',
+  'kochi': 'kerala',
+  'kozhikode': 'kerala',
+  'thrissur': 'kerala',
+  'madras': 'tamil nadu',
+  'chennai': 'tamil nadu',
+  'coimbatore': 'tamil nadu',
+  'salem': 'tamil nadu',
+  'madurai': 'tamil nadu',
+  'vijayawada': 'andhra pradesh',
+  'vishakapatnam': 'andhra pradesh',
+  'tirupati': 'andhra pradesh',
+  'guwahati': 'assam',
+  'ranchi': 'jharkhand',
+  'patna': 'bihar',
+  'gaya': 'bihar',
+  'meerut': 'uttar pradesh',
+  'agra': 'uttar pradesh',
+  'gwalior': 'madhya pradesh',
+  'raipur': 'chhattisgarh',
+  'bilaspur': 'chhattisgarh',
+  'thiruvanantapuram': 'kerala',
+  'kottayam': 'kerala',
+  'malappuram': 'kerala'
+};
+
 function RecommendationPage() {
   // Input mode toggle
   const [inputMode, setInputMode] = useState('location');
@@ -13,6 +71,9 @@ function RecommendationPage() {
   const [selectedDistrict, setSelectedDistrict] = useState('');
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [autoFilled, setAutoFilled] = useState(false);
+  
+  // Weather data
+  const [geoLoading, setGeoLoading] = useState(false);
   
   // Testing centers
   const [testingCenters, setTestingCenters] = useState([]);
@@ -98,6 +159,133 @@ function RecommendationPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchWeatherData = async (state) => {
+    try {
+      setGeoLoading(true);
+      
+      // Fetch weather data from API  
+      const weatherResponse = await fetch(`http://localhost:5000/api/weather?city=${encodeURIComponent(state)}`);
+      const weatherData = await weatherResponse.json();
+      
+      // Fetch soil data for state
+      const soilResponse = await fetch(`http://localhost:5000/api/soil-data?state=${encodeURIComponent(state)}`);
+      const soilData = await soilResponse.json();
+      
+      if (weatherData.status === 'success' && soilData.status === 'success') {
+        const weather = weatherData.weather_data;
+        const soil = soilData.soil_data;
+        
+        // Update form with BOTH weather + soil data
+        setFormData(prev => ({
+          ...prev,
+          nitrogen: soil.nitrogen,
+          phosphorus: soil.phosphorus,
+          potassium: soil.potassium,
+          ph: soil.ph,
+          temperature: weather.temperature,
+          humidity: weather.humidity,
+          rainfall: weather.rainfall
+        }));
+        
+        setAutoFilled(true);
+        setErrors(prev => ({...prev, location: ''}));
+      } else {
+        setErrors(prev => ({...prev, location: 'Failed to fetch data'}));
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      setErrors(prev => ({...prev, location: 'Error loading data'}));
+    } finally {
+      setGeoLoading(false);
+    }
+  };
+
+  const requestGeolocation = () => {
+    if (!navigator.geolocation) {
+      setErrors(prev => ({...prev, location: 'Geolocation is not supported by your browser'}));
+      return;
+    }
+
+    setGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude, longitude } = position.coords;
+          
+          // Use reverse geocoding to find city
+          const geoResponse = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+          );
+          const geoData = await geoResponse.json();
+          
+          // Extract city/state from reverse geocoding
+          const city = geoData.address?.city || 
+                       geoData.address?.town || 
+                       geoData.address?.village ||
+                       geoData.address?.county ||
+                       '';
+          
+          const stateName = geoData.address?.state || '';
+          
+          // Try to find state from city
+          let detectedState = CITY_STATE_MAP[city.toLowerCase()] || stateName.toLowerCase();
+          
+          // Normalize state name
+          const normalizedState = Object.keys(locations).find(
+            s => s.toLowerCase() === detectedState.toLowerCase()
+          );
+          
+          if (!normalizedState) {
+            setErrors(prev => ({...prev, location: 'Could not detect your state. Please select manually.'}));
+            setGeoLoading(false);
+            return;
+          }
+          
+          // Use backend endpoint to intelligently find best matching district
+          let detectedDistrict = '';
+          try {
+            const districtResponse = await fetch(
+              `http://localhost:5000/api/geo-district?lat=${latitude}&lon=${longitude}&state=${encodeURIComponent(normalizedState)}`
+            );
+            const districtData = await districtResponse.json();
+            
+            if (districtData.status === 'success' && districtData.district) {
+              detectedDistrict = districtData.district;
+              console.log(`✓ Auto-detected district: ${districtData.district} (confidence: ${districtData.confidence}%)`);
+            }
+          } catch (error) {
+            console.warn('Could not fetch district from coordinates:', error);
+          }
+          
+          // Auto-select state and district
+          setSelectedState(normalizedState);
+          setSelectedDistrict(detectedDistrict);
+          
+          // Fetch weather and soil data
+          await fetchWeatherData(normalizedState);
+        } catch (error) {
+          console.error('Error processing geolocation:', error);
+          setErrors(prev => ({...prev, location: 'Error processing location. Please select manually.'}));
+          setGeoLoading(false);
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setErrors(prev => ({...prev, location: 'Location permission denied. Please select state manually.'}));
+            break;
+          case error.POSITION_UNAVAILABLE:
+            setErrors(prev => ({...prev, location: 'Location unavailable. Please select state manually.'}));
+            break;
+          default:
+            setErrors(prev => ({...prev, location: 'Error getting location. Please select state manually.'}));
+        }
+        setGeoLoading(false);
+      }
+    );
   };
 
   const fetchTestingCenters = async () => {
@@ -230,10 +418,41 @@ function RecommendationPage() {
 
           <form onSubmit={handleSubmit} className="recommendation-form">
             
-            {/* Location Selection */}
+            {/* Streamlined Location Section - One click auto-fills everything */}
             {inputMode === 'location' && (
-              <div className="location-section">
+              <div className="form-section location-section">
                 <h3>📍 Your Location</h3>
+                <p className="section-description">Grant location access for instant auto-fill, or manually select your state</p>
+                
+                {/* Geolocation Button */}
+                <div className="form-group">
+                  <button
+                    type="button"
+                    onClick={requestGeolocation}
+                    className="geolocation-btn"
+                    disabled={geoLoading}
+                  >
+                    {geoLoading ? (
+                      <>
+                        <span className="spinner-mini"></span> Detecting Location...
+                      </>
+                    ) : (
+                      <>
+                        📍 Use Current Location
+                      </>
+                    )}
+                  </button>
+                  {errors.location && <span className="error-text">{errors.location}</span>}
+                  {autoFilled && (
+                    <div className="inline-success">✅ All data auto-filled from your location!</div>
+                  )}
+                </div>
+
+                {/* State & District Selection */}
+                <div className="divider">
+                  <span>OR</span>
+                </div>
+
                 <div className="grid grid-2">
                   <div className="form-group">
                     <label htmlFor="state" className="form-label">State *</label>
@@ -252,7 +471,7 @@ function RecommendationPage() {
                   </div>
 
                   <div className="form-group">
-                    <label htmlFor="district" className="form-label">District (Optional)</label>
+                    <label htmlFor="district" className="form-label">District</label>
                     <select
                       id="district"
                       value={selectedDistrict}
@@ -268,12 +487,7 @@ function RecommendationPage() {
                   </div>
                 </div>
 
-                {autoFilled && (
-                  <div className="info-box">
-                    ✅ Soil parameters auto-filled based on your location! You can adjust weather data below.
-                  </div>
-                )}
-
+                {/* Soil Testing Centers */}
                 <button
                   type="button"
                   onClick={fetchTestingCenters}
@@ -301,6 +515,13 @@ function RecommendationPage() {
             )}
 
             {/* Soil Nutrients Section */}
+            {inputMode === 'manual' && (
+              <div className="form-section manual-entry-section">
+                <h3>✏️ Manual Entry - Soil Test Data</h3>
+                <p className="section-description">Enter your soil test values from your agricultural lab report</p>
+              </div>
+            )}
+
             <div className="form-section">
               <h3>🌱 Soil Nutrients (NPK) {autoFilled && <span className="badge">Auto-filled</span>}</h3>
               <div className="grid grid-2">
