@@ -65,6 +65,12 @@ weather_state_data = None
 user_sessions = {}
 CHAT_LOG_FILE = Path("data/chat_logs.csv")
 
+# Fertilizer model artifacts
+fertilizer_classifier = None
+fertilizer_scaler = None
+fertilizer_encoders_info = None
+fertilizer_label_encoders = None
+
 SUPPORTED_SEASONS = {"summer", "rainy", "winter", "spring"}
 MARKET_INTENT_KEYWORDS = {
     "market", "price", "rates", "rate", "भाव", "भाऊ", "भावा", "बाजार", "मार्केट"
@@ -457,6 +463,7 @@ WEATHER_API_BASE = "https://api.weatherapi.com/v1/current.json"
 def load_models():
     """Load trained ML models and scalers"""
     global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices, location_data, soil_defaults, weather_state_data
+    global fertilizer_classifier, fertilizer_scaler, fertilizer_encoders_info, fertilizer_label_encoders
     
     try:
         logger.info("Loading models...")
@@ -469,6 +476,20 @@ def load_models():
         
         with open(MODEL_DIR / "model_metadata.json", 'r') as f:
             model_metadata = json.load(f)
+        
+        # Load fertilizer recommendation model
+        try:
+            fertilizer_classifier = joblib.load(MODEL_DIR / "fertilizer_classifier.pkl")
+            fertilizer_scaler = joblib.load(MODEL_DIR / "fertilizer_scaler.pkl")
+            fertilizer_label_encoders = joblib.load(MODEL_DIR / "fertilizer_label_encoders.pkl")
+            
+            with open(MODEL_DIR / "fertilizer_encoders.json", 'r') as f:
+                fertilizer_encoders_info = json.load(f)
+            
+            logger.info(f"✓ Fertilizer model loaded: {len(fertilizer_encoders_info['fertilizers'])} fertilizer types")
+        except Exception as e:
+            logger.warning(f"Could not load fertilizer model: {e}")
+            fertilizer_classifier = None
         
         # Load sample training data for market insights
         training_data = pd.read_csv(PROCESSED_DATA_DIR / "merged_training_data.csv")
@@ -2052,6 +2073,230 @@ def predict_yield():
     
     except Exception as e:
         logger.error(f"Error in yield prediction: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+def _prepare_fertilizer_features(data: dict, crop: str):
+    """Prepare features for fertilizer recommendation"""
+    # Base features
+    N = data.get('nitrogen', data.get('N', 50))
+    P = data.get('phosphorus', data.get('P', 50))
+    K = data.get('potassium', data.get('K', 50))
+    temperature = data.get('temperature', 25)
+    humidity = data.get('humidity', 70)
+    ph = data.get('ph', 6.5)
+    rainfall = data.get('rainfall', 1000)
+    
+    # Engineer features (same as training)
+    npk_sum = N + P + K
+    npk_balance = np.std([N, P, K])
+    n_to_p_ratio = N / (P + 1)
+    p_to_k_ratio = P / (K + 1)
+    n_to_k_ratio = N / (K + 1)
+    
+    # Soil pH indicators
+    ph_acidic = 1 if ph < 6.5 else 0
+    ph_alkaline = 1 if ph > 7.5 else 0
+    ph_neutral = 1 if 6.5 <= ph <= 7.5 else 0
+    
+    # Climate categories
+    temp_category = 0 if temperature < 15 else (1 if temperature < 25 else (2 if temperature < 35 else 3))
+    rainfall_category = 0 if rainfall < 500 else (1 if rainfall < 1000 else (2 if rainfall < 1500 else 3))
+    humidity_category = 0 if humidity < 40 else (1 if humidity < 60 else (2 if humidity < 80 else 3))
+    
+    # Nutrient deficiency indicators
+    n_deficient = 1 if N < 40 else 0
+    p_deficient = 1 if P < 30 else 0
+    k_deficient = 1 if K < 40 else 0
+    
+    # Encode crop
+    crop_normalized = crop.strip().title()
+    if crop_normalized in fertilizer_label_encoders['crop_encoder'].classes_:
+        crop_encoded = fertilizer_label_encoders['crop_encoder'].transform([crop_normalized])[0]
+    else:
+        # Use most common crop as default
+        crop_encoded = 0
+    
+    # Build feature array (must match training order)
+    features = np.array([[
+        N, P, K, temperature, humidity, ph, rainfall,
+        npk_sum, npk_balance, n_to_p_ratio, p_to_k_ratio, n_to_k_ratio,
+        ph_acidic, ph_alkaline, ph_neutral,
+        temp_category, rainfall_category, humidity_category,
+        n_deficient, p_deficient, k_deficient,
+        crop_encoded
+    ]])
+    
+    return features
+
+def _run_fertilizer_recommendation_logic(data: dict, crop: str):
+    """Core fertilizer recommendation logic"""
+    if fertilizer_classifier is None or fertilizer_scaler is None or fertilizer_label_encoders is None:
+        raise RuntimeError("Fertilizer model artifacts are not loaded")
+    
+    # Prepare features
+    features = _prepare_fertilizer_features(data, crop)
+    
+    # Scale features
+    features_scaled = fertilizer_scaler.transform(features)
+    
+    # Get predictions
+    probabilities = fertilizer_classifier.predict_proba(features_scaled)[0]
+    fertilizer_names = fertilizer_encoders_info['fertilizers']
+    
+    # Get top 3 recommendations
+    top_indices = np.argsort(probabilities)[-3:][::-1]
+    recommendations = []
+    
+    for idx in top_indices:
+        fertilizer = fertilizer_names[idx]
+        confidence = float(probabilities[idx]) * 100
+        
+        # Get application details based on fertilizer type
+        application_details = _get_fertilizer_application_details(
+            fertilizer, data.get('nitrogen', 50), data.get('phosphorus', 50), data.get('potassium', 50)
+        )
+        
+        recommendations.append({
+            "fertilizer": fertilizer,
+            "confidence": round(confidence, 2),
+            "dosage": application_details['dosage'],
+            "application_method": application_details['method'],
+            "benefits": application_details['benefits'],
+            "timing": application_details['timing']
+        })
+    
+    return {
+        "status": "success",
+        "crop": crop,
+        "primary_fertilizer": recommendations[0]['fertilizer'],
+        "recommendations": recommendations,
+        "soil_analysis": {
+            "nitrogen": data.get('nitrogen', data.get('N', 50)),
+            "phosphorus": data.get('phosphorus', data.get('P', 50)),
+            "potassium": data.get('potassium', data.get('K', 50)),
+            "ph": data.get('ph', 6.5),
+            "nitrogen_status": "Low" if data.get('nitrogen', 50) < 40 else ("Medium" if data.get('nitrogen', 50) < 80 else "High"),
+            "phosphorus_status": "Low" if data.get('phosphorus', 50) < 30 else ("Medium" if data.get('phosphorus', 50) < 60 else "High"),
+            "potassium_status": "Low" if data.get('potassium', 50) < 40 else ("Medium" if data.get('potassium', 50) < 80 else "High")
+        }
+    }
+
+def _get_fertilizer_application_details(fertilizer: str, N: float, P: float, K: float):
+    """Get detailed application guidance for fertilizers"""
+    fertilizer_guide = {
+        "Urea": {
+            "dosage": "200-250 kg/ha" if N < 40 else ("150-200 kg/ha" if N < 80 else "100-150 kg/ha"),
+            "method": "Split application: 50% at sowing, 25% at tillering, 25% at flowering",
+            "benefits": "Rich in nitrogen (46% N), promotes vegetative growth and green foliage",
+            "timing": "Apply during active growth stages. Avoid application during flowering for fruits"
+        },
+        "Dap": {
+            "dosage": "150-200 kg/ha" if P < 30 else ("100-150 kg/ha" if P < 60 else "75-100 kg/ha"),
+            "method": "Apply as basal dose at time of sowing, 5-7 cm deep near root zone",
+            "benefits": "Contains 18% N and 46% P2O5, excellent for root development and flowering",
+            "timing": "Best applied at sowing or transplanting stage"
+        },
+        "Mop": {
+            "dosage": "100-150 kg/ha" if K < 40 else ("75-100 kg/ha" if K < 80 else "50-75 kg/ha"),
+            "method": "Apply in 2 splits: 50% at sowing with DAP, 50% at flowering/fruiting stage",
+            "benefits": "60% K2O content, improves disease resistance and crop quality",
+            "timing": "Critical during reproductive stage for fruit/grain quality"
+        },
+        "Npk": {
+            "dosage": "150-200 kg/ha for balanced nutrition",
+            "method": "Apply 60% as basal + 40% as top dressing at critical growth stages",
+            "benefits": "Balanced NPK ratio provides complete nutrition for optimal growth",
+            "timing": "Basal at sowing + top dressing at 30-45 days after sowing"
+        },
+        "19:19:19 Npk": {
+            "dosage": "100-150 kg/ha for complete nutrition",
+            "method": "Apply through fertigation or broadcast and incorporate into soil",
+            "benefits": "Equal NPK ratio (19:19:19) ensures balanced plant nutrition",
+            "timing": "Suitable for all growth stages, especially vegetative and reproductive phases"
+        },
+        "10:26:26 Npk": {
+            "dosage": "125-175 kg/ha, ideal for flowering crops",
+            "method": "Apply as basal dose or side dressing during early flowering",
+            "benefits": "High P & K promotes root growth, flowering, and fruiting",
+            "timing": "Best at pre-flowering and early fruiting stages"
+        },
+        "Ssp": {
+            "dosage": "200-250 kg/ha" if P < 30 else "150-200 kg/ha",
+            "method": "Apply as basal dose, mix well with soil before sowing",
+            "benefits": "16% P2O5 + 11% Sulphur, excellent for oilseeds and pulses",
+            "timing": "Apply 7-10 days before sowing for best results"
+        },
+        "Compost": {
+            "dosage": "5-10 tonnes/ha depending on soil organic matter",
+            "method": "Broadcast uniformly and incorporate into top 15 cm of soil",
+            "benefits": "Improves soil structure, water retention, and microbial activity",
+            "timing": "Apply 2-3 weeks before sowing, during land preparation"
+        },
+        "Zinc Sulphate": {
+            "dosage": "25-50 kg/ha for zinc deficient soils",
+            "method": "Soil application or foliar spray (0.5% solution)",
+            "benefits": "Corrects zinc deficiency, improves enzyme activity and crop yield",
+            "timing": "Soil application at sowing or foliar spray at 30 days after sowing"
+        },
+        "Magnesium Sulphate": {
+            "dosage": "25-30 kg/ha or 2% foliar spray",
+            "method": "Soil application with basal fertilizers or foliar spray",
+            "benefits": "Essential for chlorophyll formation and enzyme activation",
+            "timing": "Apply when magnesium deficiency symptoms appear (yellowing between veins)"
+        }
+    }
+    
+    # Default guidance for fertilizers not in the guide
+    default_guide = {
+        "dosage": "Apply as per soil test recommendations",
+        "method": "Follow manufacturer's guidelines for application",
+        "benefits": "Provides essential nutrients for crop growth and development",
+        "timing": "Apply according to crop growth stage requirements"
+    }
+    
+    return fertilizer_guide.get(fertilizer, default_guide)
+
+@app.route('/api/recommend-fertilizer', methods=['POST'])
+def recommend_fertilizer():
+    """
+    Recommend fertilizers based on soil conditions and crop
+    
+    Request body:
+    {
+        "crop": string,
+        "nitrogen": float,
+        "phosphorus": float,
+        "potassium": float,
+        "temperature": float,
+        "humidity": float,
+        "ph": float,
+        "rainfall": float
+    }
+    """
+    try:
+        data = request.json or {}
+        
+        # Validate crop field
+        if 'crop' not in data or not data['crop']:
+            return jsonify({
+                "status": "error",
+                "message": "Crop name is required"
+            }), 400
+        
+        crop = data['crop']
+        result = _run_fertilizer_recommendation_logic(data, crop)
+        return jsonify(result)
+        
+    except RuntimeError as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in fertilizer recommendation: {e}")
         return jsonify({
             "status": "error",
             "message": str(e)
