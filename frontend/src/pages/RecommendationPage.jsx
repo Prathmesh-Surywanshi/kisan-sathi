@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { AlertCircle, HelpCircle, MapPin, Send } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Send, AlertCircle, MapPin, HelpCircle } from 'lucide-react';
 import '../styles/RecommendationPage.css';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 // City to State mapping for India
 const CITY_STATE_MAP = {
@@ -101,7 +103,7 @@ function RecommendationPage() {
 
   const fetchLocations = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/locations');
+      const response = await fetch(`${API_BASE_URL}/api/locations`);
       const data = await response.json();
       if (data.status === 'success') {
         setLocations(data.locations);
@@ -121,6 +123,7 @@ function RecommendationPage() {
     
     if (state && inputMode === 'location') {
       await fetchSoilData(state, '');
+      await fetchWeatherData(state, '');
     }
   };
 
@@ -130,13 +133,14 @@ function RecommendationPage() {
     
     if (selectedState && district && inputMode === 'location') {
       await fetchSoilData(selectedState, district);
+      await fetchWeatherData(selectedState, district);
     }
   };
 
   const fetchSoilData = async (state, district) => {
     try {
       setLoading(true);
-      let url = `http://localhost:5000/api/soil-data?state=${encodeURIComponent(state)}`;
+      let url = `${API_BASE_URL}/api/soil-data?state=${encodeURIComponent(state)}`;
       if (district) {
         url += `&district=${encodeURIComponent(district)}`;
       }
@@ -161,42 +165,40 @@ function RecommendationPage() {
     }
   };
 
-  const fetchWeatherData = async (state) => {
+  const fetchWeatherData = async (state, district) => {
     try {
       setGeoLoading(true);
       
-      // Fetch weather data from API  
-      const weatherResponse = await fetch(`http://localhost:5000/api/weather?city=${encodeURIComponent(state)}`);
+      const weatherUrl = `${API_BASE_URL}/api/weather-data?state=${encodeURIComponent(state)}${district ? `&district=${encodeURIComponent(district)}` : ''}`;
+      const weatherResponse = await fetch(weatherUrl);
       const weatherData = await weatherResponse.json();
-      
-      // Fetch soil data for state
-      const soilResponse = await fetch(`http://localhost:5000/api/soil-data?state=${encodeURIComponent(state)}`);
-      const soilData = await soilResponse.json();
-      
-      if (weatherData.status === 'success' && soilData.status === 'success') {
-        const weather = weatherData.weather_data;
-        const soil = soilData.soil_data;
-        
-        // Update form with BOTH weather + soil data
+
+      let weather = null;
+      if (weatherData.status === 'success') {
+        weather = weatherData.weather_data;
+      } else {
+        const realtimeResponse = await fetch(`${API_BASE_URL}/api/weather?city=${encodeURIComponent(state)}`);
+        const realtimeData = await realtimeResponse.json();
+        if (realtimeData.status === 'success') {
+          weather = realtimeData.weather_data;
+        }
+      }
+
+      if (weather) {
         setFormData(prev => ({
           ...prev,
-          nitrogen: soil.nitrogen,
-          phosphorus: soil.phosphorus,
-          potassium: soil.potassium,
-          ph: soil.ph,
           temperature: weather.temperature,
           humidity: weather.humidity,
           rainfall: weather.rainfall
         }));
-        
         setAutoFilled(true);
         setErrors(prev => ({...prev, location: ''}));
       } else {
-        setErrors(prev => ({...prev, location: 'Failed to fetch data'}));
+        setErrors(prev => ({...prev, location: 'Weather data unavailable. Please enter manually.'}));
       }
     } catch (error) {
       console.error('Error fetching data:', error);
-      setErrors(prev => ({...prev, location: 'Error loading data'}));
+      setErrors(prev => ({...prev, location: 'Error loading weather data'}));
     } finally {
       setGeoLoading(false);
     }
@@ -247,7 +249,7 @@ function RecommendationPage() {
           let detectedDistrict = '';
           try {
             const districtResponse = await fetch(
-              `http://localhost:5000/api/geo-district?lat=${latitude}&lon=${longitude}&state=${encodeURIComponent(normalizedState)}`
+              `${API_BASE_URL}/api/geo-district?lat=${latitude}&lon=${longitude}&state=${encodeURIComponent(normalizedState)}`
             );
             const districtData = await districtResponse.json();
             
@@ -264,7 +266,7 @@ function RecommendationPage() {
           setSelectedDistrict(detectedDistrict);
           
           // Fetch weather and soil data
-          await fetchWeatherData(normalizedState);
+          await fetchWeatherData(normalizedState, detectedDistrict);
         } catch (error) {
           console.error('Error processing geolocation:', error);
           setErrors(prev => ({...prev, location: 'Error processing location. Please select manually.'}));
@@ -292,7 +294,7 @@ function RecommendationPage() {
     if (!selectedState) return;
     
     try {
-      const response = await fetch(`http://localhost:5000/api/testing-centers?state=${encodeURIComponent(selectedState)}`);
+      const response = await fetch(`${API_BASE_URL}/api/testing-centers?state=${encodeURIComponent(selectedState)}`);
       const data = await response.json();
       
       if (data.status === 'success') {
@@ -344,7 +346,7 @@ function RecommendationPage() {
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/recommend-crop', {
+      const response = await fetch(`${API_BASE_URL}/api/recommend-crop`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

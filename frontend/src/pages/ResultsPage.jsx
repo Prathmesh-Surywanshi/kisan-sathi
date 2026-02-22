@@ -1,25 +1,30 @@
-import React, { useState, useEffect } from 'react';
-import { useLocation, Link } from 'react-router-dom';
-import { CheckCircle, TrendingUp, Cloud, Droplets, Zap } from 'lucide-react';
+import { Calendar, CheckCircle, Cloud, Droplets, FlaskConical, Leaf, Target, TrendingUp, Zap } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import '../styles/ResultsPage.css';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
 function ResultsPage() {
   const location = useLocation();
   const [results, setResults] = useState(null);
   const [selectedCrop, setSelectedCrop] = useState(null);
   const [riskData, setRiskData] = useState(null);
+  const [fertilizerData, setFertilizerData] = useState(null);
+  const [loadingFertilizer, setLoadingFertilizer] = useState(false);
 
   useEffect(() => {
     if (location.state?.results) {
       setResults(location.state.results);
       setSelectedCrop(location.state.results.primary_recommendation);
       fetchRiskData(location.state.results.primary_recommendation);
+      fetchFertilizerRecommendation(location.state.results.primary_recommendation, location.state.results.input_conditions);
     }
   }, [location]);
 
   const fetchRiskData = async (crop) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/market-insights/${crop}`);
+      const response = await fetch(`${API_BASE_URL}/api/market-insights/${crop}`);
       const data = await response.json();
       if (data.status === 'success') {
         setRiskData(data);
@@ -29,9 +34,40 @@ function ResultsPage() {
     }
   };
 
+  const fetchFertilizerRecommendation = async (crop, inputConditions) => {
+    setLoadingFertilizer(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/recommend-fertilizer`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          crop: crop,
+          nitrogen: inputConditions.nitrogen,
+          phosphorus: inputConditions.phosphorus,
+          potassium: inputConditions.potassium,
+          temperature: inputConditions.temperature,
+          humidity: inputConditions.humidity,
+          ph: inputConditions.ph,
+          rainfall: inputConditions.rainfall
+        })
+      });
+      const data = await response.json();
+      if (data.status === 'success') {
+        setFertilizerData(data);
+      }
+    } catch (error) {
+      console.error('Error fetching fertilizer recommendation:', error);
+    } finally {
+      setLoadingFertilizer(false);
+    }
+  };
+
   const handleCropSelect = (crop) => {
     setSelectedCrop(crop);
     fetchRiskData(crop);
+    fetchFertilizerRecommendation(crop, results.input_conditions);
   };
 
   if (!results) {
@@ -85,6 +121,149 @@ function ResultsPage() {
             </div>
           </div>
         </div>
+
+        {/* Fertilizer Recommendation Section */}
+        {fertilizerData && (
+          <div className="fertilizer-section card fade-in">
+            <div className="section-header">
+              <FlaskConical size={28} color="#27ae60" />
+              <h2>🌿 Fertilizer Advisory for {selectedCrop}</h2>
+            </div>
+            
+            {/* Soil Nutrient Status */}
+            <div className="soil-status-grid">
+              <div className="nutrient-status">
+                <span className="nutrient-label">Nitrogen (N)</span>
+                <div className="nutrient-bar-container">
+                  <div 
+                    className={`nutrient-bar nutrient-${fertilizerData.soil_analysis.nitrogen_status.toLowerCase()}`}
+                    style={{ width: `${Math.min((fertilizerData.soil_analysis.nitrogen / 120) * 100, 100)}%` }}
+                  ></div>
+                </div>
+                <span className={`status-badge status-${fertilizerData.soil_analysis.nitrogen_status.toLowerCase()}`}>
+                  {fertilizerData.soil_analysis.nitrogen} - {fertilizerData.soil_analysis.nitrogen_status}
+                </span>
+              </div>
+              
+              <div className="nutrient-status">
+                <span className="nutrient-label">Phosphorus (P)</span>
+                <div className="nutrient-bar-container">
+                  <div 
+                    className={`nutrient-bar nutrient-${fertilizerData.soil_analysis.phosphorus_status.toLowerCase()}`}
+                    style={{ width: `${Math.min((fertilizerData.soil_analysis.phosphorus / 90) * 100, 100)}%` }}
+                  ></div>
+                </div>
+                <span className={`status-badge status-${fertilizerData.soil_analysis.phosphorus_status.toLowerCase()}`}>
+                  {fertilizerData.soil_analysis.phosphorus} - {fertilizerData.soil_analysis.phosphorus_status}
+                </span>
+              </div>
+              
+              <div className="nutrient-status">
+                <span className="nutrient-label">Potassium (K)</span>
+                <div className="nutrient-bar-container">
+                  <div 
+                    className={`nutrient-bar nutrient-${fertilizerData.soil_analysis.potassium_status.toLowerCase()}`}
+                    style={{ width: `${Math.min((fertilizerData.soil_analysis.potassium / 120) * 100, 100)}%` }}
+                  ></div>
+                </div>
+                <span className={`status-badge status-${fertilizerData.soil_analysis.potassium_status.toLowerCase()}`}>
+                  {fertilizerData.soil_analysis.potassium} - {fertilizerData.soil_analysis.potassium_status}
+                </span>
+              </div>
+              
+              <div className="nutrient-status">
+                <span className="nutrient-label">Soil pH</span>
+                <div className="nutrient-bar-container">
+                  <div 
+                    className="nutrient-bar nutrient-ph"
+                    style={{ width: `${(fertilizerData.soil_analysis.ph / 14) * 100}%` }}
+                  ></div>
+                </div>
+                <span className="status-badge status-neutral">
+                  {fertilizerData.soil_analysis.ph} - {fertilizerData.soil_analysis.ph < 6.5 ? 'Acidic' : fertilizerData.soil_analysis.ph > 7.5 ? 'Alkaline' : 'Neutral'}
+                </span>
+              </div>
+            </div>
+
+            {/* Primary Fertilizer Recommendation */}
+            <div className="primary-fertilizer">
+              <div className="primary-fertilizer-badge">⭐ Recommended Fertilizer</div>
+              <h3>{fertilizerData.primary_fertilizer}</h3>
+              <div className="confidence-score">
+                <span>Confidence: {fertilizerData.recommendations[0].confidence}%</span>
+                <div className="confidence-bar">
+                  <div 
+                    className="confidence-fill" 
+                    style={{ width: `${fertilizerData.recommendations[0].confidence}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Detailed Fertilizer Recommendations */}
+            <div className="fertilizer-recommendations-grid">
+              {fertilizerData.recommendations.map((rec, idx) => (
+                <div key={idx} className="fertilizer-card">
+                  <div className="fertilizer-header">
+                    <h4>{rec.fertilizer}</h4>
+                    <span className="fertilizer-confidence">{rec.confidence}%</span>
+                  </div>
+                  
+                  <div className="fertilizer-details">
+                    <div className="fertilizer-detail-item">
+                      <Target size={18} />
+                      <div>
+                        <span className="detail-label">Dosage</span>
+                        <span className="detail-value">{rec.dosage}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="fertilizer-detail-item">
+                      <Calendar size={18} />
+                      <div>
+                        <span className="detail-label">Best Timing</span>
+                        <span className="detail-value">{rec.timing}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="fertilizer-detail-item">
+                      <Leaf size={18} />
+                      <div>
+                        <span className="detail-label">Application Method</span>
+                        <span className="detail-value">{rec.application_method}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="fertilizer-benefits">
+                      <strong>Benefits:</strong>
+                      <p>{rec.benefits}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            {/* Fertilizer Application Tips */}
+            <div className="fertilizer-tips">
+              <h4>💡 Application Tips</h4>
+              <ul>
+                <li>Always conduct soil testing before applying fertilizers</li>
+                <li>Apply fertilizers in split doses for better nutrient uptake</li>
+                <li>Avoid over-fertilization as it can harm crops and environment</li>
+                <li>Apply fertilizers when soil has adequate moisture</li>
+                <li>Keep fertilizers away from direct contact with seeds</li>
+                <li>Store fertilizers in a cool, dry place away from direct sunlight</li>
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {loadingFertilizer && (
+          <div className="loading-fertilizer card">
+            <div className="loading-spinner"></div>
+            <p>Loading fertilizer recommendations...</p>
+          </div>
+        )}
 
         <div className="results-grid">
           {/* Alternative Recommendations */}
