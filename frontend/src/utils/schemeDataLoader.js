@@ -124,9 +124,11 @@ export const searchSchemes = async (criteria = {}) => {
   });
 };
 
-export default {
+const schemeDataLoader = {
   loadSchemesData,
   clearSchemesCache,
   getSchemeById,
   searchSchemes
 };
+
+export default schemeDataLoader;
