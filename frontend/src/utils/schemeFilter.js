@@ -123,7 +123,6 @@ export const getRecommendedSchemes = ({
 }) => {
   if (!schemes || schemes.length === 0) return [];
 
-  const recommended = [];
   const priorityMap = new Map();
 
   // Filter for the selected state (include central schemes)
@@ -309,7 +308,7 @@ export const sortSchemes = (schemes = [], sortBy = 'name', order = 'asc') => {
   return sorted;
 };
 
-export default {
+const schemeFilter = {
   filterSchemes,
   getAllStates,
   getAllCategories,
@@ -319,3 +318,5 @@ export default {
   sortSchemes,
   loadSchemes
 };
+
+export default schemeFilter;
