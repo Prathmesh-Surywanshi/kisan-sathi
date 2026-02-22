@@ -23,9 +23,15 @@ KISAN is an intelligent agricultural decision support system designed to help In
 ✅ **Beautiful Farmer-Centric UI** - Mobile-responsive, easy-to-use interface  
 ✅ **12-Language Support** - Built-in translation options for Indian users  
 ✅ **Location-Based Input Mode** - Auto-fill soil values by state and district  
-✅ **Market Insights** - Real-time market trends and seasonal recommendations  
+✅ **Market Insights** - Live prices, 90-day trends, seasonal recommendations  
+✅ **Aaj Ka Bhav (Live)** - Direct API-only price feed when available  
 ✅ **Risk Management** - Comprehensive risk assessment for informed decisions  
 ✅ **Real-time Recommendations** - Instant crop suggestions based on input conditions  
+✅ **Fertilizer Advisor** - ML-based fertilizer recommendations  
+✅ **Global Market Access** - Export demand, top exporters, commodity trends  
+✅ **Government Schemes** - Central/state schemes with filters and eligibility  
+✅ **WhatsApp Bot** - Automated menu-driven guidance for farmers  
+✅ **Web Chat Bot** - Botpress webchat embedded in the UI  
 
 ---
 
@@ -205,6 +211,21 @@ Content-Type: application/json
 GET /api/market-insights/{crop}
 ```
 
+### Get Global Market Data
+```http
+GET /api/global/countries
+GET /api/global/commodities
+GET /api/global/export-demand?commodity={commodity}
+GET /api/global/export-by-country/{country}
+GET /api/global/top-exporters?commodity={commodity}&year=2024&limit=10
+```
+
+### WhatsApp Webhook
+```http
+GET /webhook
+POST /webhook
+```
+
 ### Get Seasonal Recommendations
 ```http
 GET /api/seasonal-recommendations/{season}
@@ -253,11 +274,21 @@ GET /api/feature-importance
 ### 📈 **Market Insights Page**
 - Season selection (Summer, Winter, Rainy, Spring)
 - Seasonal crop recommendations
-- Market trends and price stability
+- Market trends and 90-day price stability
 - Risk assessment dashboard
 - Optimal growing conditions
 - Growing timeline
 - Farmer tips and best practices
+
+### 🌍 **Global Market Access Page**
+- Country and commodity exploration
+- Export demand charts and top exporters
+- Commodity trend insights for global trade
+
+### 🏛️ **Government Schemes Page**
+- Central and state scheme filters
+- Eligibility, benefit, and department details
+- Official portal links and categories
 
 ---
 
