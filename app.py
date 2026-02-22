@@ -139,7 +139,7 @@ def load_models():
         # Load global market processor for FAOSTAT data
         try:
             from training.global_market_processor import GlobalMarketProcessor
-            faostat_path = Path(__file__).parent / "FAOSTAT_data_en_2-22-2026.csv"
+            faostat_path = Path(__file__).parent / "data" / "processed" / "FAOSTAT_data_en_2-22-2026 (added countries).csv"
             if faostat_path.exists():
                 global_market_processor = GlobalMarketProcessor(str(faostat_path))
                 logger.info(f"✓ Global market data loaded: {len(global_market_processor.get_countries())} countries, {len(global_market_processor.get_commodities())} commodities")

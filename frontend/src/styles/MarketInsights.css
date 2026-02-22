@@ -139,11 +139,14 @@
 }
 
 .summary-card.trend-card {
+  border: 1px solid #e0e0e0;
   border-left: 4px solid #1976d2;
 }
 
 .summary-card.forecast-card {
-  border-left: 4px solid #7b1fa2;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-left: 4px solid #1976d2;
 }
 
 .summary-label {

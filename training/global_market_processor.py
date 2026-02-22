@@ -220,7 +220,7 @@ class GlobalMarketProcessor:
 
 def load_global_market_data():
     """Load and cache global market data"""
-    csv_path = Path(__file__).parent.parent / 'FAOSTAT_data_en_2-22-2026.csv'
+    csv_path = Path(__file__).parent.parent / 'data' / 'processed' / 'FAOSTAT_data_en_2-22-2026 (added countries).csv'
     
     if not csv_path.exists():
         raise FileNotFoundError(f"FAOSTAT data file not found: {csv_path}")
