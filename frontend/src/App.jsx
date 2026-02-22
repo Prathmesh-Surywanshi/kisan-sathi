@@ -4,6 +4,7 @@ import './App.css';
 import Header from './components/Header';
 import Navbar from './components/Navbar';
 import GlobalMarketAccess from './pages/GlobalMarketAccess';
+import GovernmentSchemesPage from './pages/GovernmentSchemesPage';
 import Home from './pages/Home';
 import MarketInsights from './pages/MarketInsights';
 import RecommendationPage from './pages/RecommendationPage';
@@ -44,6 +45,7 @@ function App() {
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/market-insights" element={<MarketInsights crops={crops} />} />
           <Route path="/global-market" element={<GlobalMarketAccess />} />
+          <Route path="/government-schemes" element={<GovernmentSchemesPage />} />
         </Routes>
       </div>
     </Router>

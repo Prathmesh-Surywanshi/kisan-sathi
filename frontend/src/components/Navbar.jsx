@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { ChevronDown, Languages, Leaf, Menu, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Leaf, Menu, X, Languages, ChevronDown } from 'lucide-react';
 import '../styles/Navbar.css';
 
 function Navbar() {
@@ -122,6 +122,7 @@ function Navbar() {
           <li><Link to="/recommend" onClick={() => setIsMenuOpen(false)}>Get Recommendation</Link></li>
           <li><Link to="/market-insights" onClick={() => setIsMenuOpen(false)}>Market Insights</Link></li>
           <li><Link to="/global-market" onClick={() => setIsMenuOpen(false)}>Global Market</Link></li>
+          <li><Link to="/government-schemes" onClick={() => setIsMenuOpen(false)}>Government Schemes</Link></li>
           <li className="translate-item">
             <button
               type="button"
