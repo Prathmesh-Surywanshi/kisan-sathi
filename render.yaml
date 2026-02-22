@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: kisan-sathi-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: AGMARKET_API_KEY
+        sync: false
+      - key: DATA_GOV_IN_API_KEY
+        sync: false
+      - key: WEATHER_API_KEY
+        sync: false
+      - key: WHATSAPP_GRAPH_API_VERSION
+        value: v22.0
