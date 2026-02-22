@@ -121,6 +121,7 @@ function Navbar() {
           <li><Link to="/" onClick={() => setIsMenuOpen(false)}>Home</Link></li>
           <li><Link to="/recommend" onClick={() => setIsMenuOpen(false)}>Get Recommendation</Link></li>
           <li><Link to="/market-insights" onClick={() => setIsMenuOpen(false)}>Market Insights</Link></li>
+          <li><Link to="/global-market" onClick={() => setIsMenuOpen(false)}>Global Market</Link></li>
           <li className="translate-item">
             <button
               type="button"

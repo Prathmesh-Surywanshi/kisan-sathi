@@ -62,6 +62,7 @@ market_model_cache = {}
 location_data = None
 soil_defaults = None
 weather_state_data = None
+global_market_processor = None  # Global market data processor
 user_sessions = {}
 CHAT_LOG_FILE = Path("data/chat_logs.csv")
 
@@ -440,10 +441,10 @@ TRANSLATIONS = {
 }
 
 # WhatsApp Cloud API config (set these as environment variables)
-WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "my_verify_token_123")
-WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
-WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-WHATSAPP_GRAPH_API_VERSION = os.getenv("WHATSAPP_GRAPH_API_VERSION", "v22.0")
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "my_verify_token_123").strip()
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+WHATSAPP_GRAPH_API_VERSION = os.getenv("WHATSAPP_GRAPH_API_VERSION", "v22.0").strip()
 GRAPH_API_URL = (
     f"https://graph.facebook.com/{WHATSAPP_GRAPH_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     if WHATSAPP_PHONE_NUMBER_ID else None
@@ -464,6 +465,7 @@ def load_models():
     """Load trained ML models and scalers"""
     global crop_classifier, yield_predictor, feature_scaler, encoders_info, model_metadata, training_data, market_prices, location_data, soil_defaults, weather_state_data
     global fertilizer_classifier, fertilizer_scaler, fertilizer_encoders_info, fertilizer_label_encoders
+    global global_market_processor
     
     try:
         logger.info("Loading models...")
@@ -563,6 +565,19 @@ def load_models():
         except Exception as e:
             logger.warning(f"Could not load weather data: {e}")
             weather_state_data = None
+        
+        # Load global market processor for FAOSTAT data
+        try:
+            from training.global_market_processor import GlobalMarketProcessor
+            faostat_path = Path(__file__).parent / "data" / "processed" / "FAOSTAT_data_en_2-22-2026 (added countries).csv"
+            if faostat_path.exists():
+                global_market_processor = GlobalMarketProcessor(str(faostat_path))
+                logger.info(f"✓ Global market data loaded: {len(global_market_processor.get_countries())} countries, {len(global_market_processor.get_commodities())} commodities")
+            else:
+                logger.warning(f"FAOSTAT data file not found: {faostat_path}")
+        except Exception as e:
+            logger.warning(f"Could not load global market data: {e}")
+            global_market_processor = None
         
         logger.info("✓ All models loaded successfully!")
         return True
@@ -3025,12 +3040,15 @@ def ceda_commodities():
 
 @app.route('/api/agmarket/live', methods=['GET'])
 def agmarket_live():
-    """Proxy for live CEDA Agmarknet / data.gov.in mandi prices. source=api|local."""
+    """Fetch live prices from data.gov.in API (aaj ka bhav). 
+    Only uses live APIs - no local data fallback for this endpoint.
+    For price trends and insights, local data is used in other endpoints.
+    """
     commodity = request.args.get("commodity", "").strip()
     source = request.args.get("source", "api").strip().lower()
     if not commodity:
         return jsonify({"status": "error", "message": "commodity is required"}), 400
-    records, err = fetch_agmarket_live(commodity, source=source)
+    
     if source == "local":
         return jsonify({
             "status": "success",
@@ -3039,28 +3057,36 @@ def agmarket_live():
             "message": "Using local dataset only.",
             "records": []
         })
+    
+    # Try to fetch live data from API only
+    records, err = fetch_agmarket_live(commodity, source=source)
+    
     if err == "no_api_key":
         return jsonify({
             "status": "success",
             "source": "backend",
             "live": False,
-            "message": "Set DATA_GOV_IN_API_KEY or AGMARKET_API_KEY in .env for live Aaj ka bhav.",
+            "message": "live price unavailable",
             "records": []
         })
-    if err and not records:
+    
+    if records:
         return jsonify({
             "status": "success",
-            "source": "backend",
-            "live": False,
-            "message": "live prices not found",
-            "records": []
+            "source": "agmarknet",
+            "live": True,
+            "records": records[:50],
+            "latest_date": records[0]["date"] if records else None
         })
+    
+    # API failed or returned no data
+    logger.warning(f"API failed to fetch live prices for {commodity} (err={err})")
     return jsonify({
         "status": "success",
-        "source": "agmarknet",
-        "live": True,
-        "records": records[:50],
-        "latest_date": records[0]["date"] if records else None
+        "source": "backend",
+        "live": False,
+        "message": "live price unavailable",
+        "records": []
     })
 
 
@@ -3165,6 +3191,263 @@ def model_info():
             }
         }
     })
+
+# ============= GLOBAL MARKET ACCESS ENDPOINTS =============
+
+@app.route('/api/global/countries', methods=['GET'])
+def get_global_countries():
+    """Get list of countries with export data"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        countries = global_market_processor.get_countries()
+        return jsonify({
+            "status": "success",
+            "countries": countries,
+            "count": len(countries)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching countries: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/global/commodities', methods=['GET'])
+def get_global_commodities():
+    """Get list of commodities with export data"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        commodities = global_market_processor.get_commodities()
+        return jsonify({
+            "status": "success",
+            "commodities": commodities,
+            "count": len(commodities)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching commodities: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/global/export-by-country/<country>', methods=['GET'])
+def get_export_by_country(country):
+    """Get export data for a specific country"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        element_type = request.args.get('element', 'Export quantity')
+        data = global_market_processor.get_export_by_country(country, element_type)
+        
+        if data.empty:
+            return jsonify({
+                "status": "success",
+                "country": country,
+                "exports": [],
+                "message": "No data available"
+            })
+        
+        exports = data.to_dict('records')
+        return jsonify({
+            "status": "success",
+            "country": country,
+            "element": element_type,
+            "exports": exports,
+            "count": len(exports)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching country exports: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/global/export-demand', methods=['GET'])
+def get_export_demand():
+    """Get global export demand trend"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        commodity = request.args.get('commodity')
+        element_type = request.args.get('element', 'Export quantity')
+        
+        data = global_market_processor.get_global_export_demand(commodity, element_type)
+        
+        if data.empty:
+            return jsonify({
+                "status": "success",
+                "commodity": commodity,
+                "demand": [],
+                "message": "No data available"
+            })
+        
+        demand_list = data.to_dict('records')
+        return jsonify({
+            "status": "success",
+            "commodity": commodity or "All commodities",
+            "element": element_type,
+            "demand": demand_list,
+            "years": data['Year'].tolist()
+        })
+    except Exception as e:
+        logger.error(f"Error fetching export demand: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/global/commodity-trend/<commodity>', methods=['GET'])
+def get_commodity_trend(commodity):
+    """Get commodity export trend by country"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        element_type = request.args.get('element', 'Export quantity')
+        data = global_market_processor.get_commodity_export_trend(commodity, element_type)
+        
+        if data.empty:
+            return jsonify({
+                "status": "success",
+                "commodity": commodity,
+                "trend": [],
+                "message": "No data available"
+            })
+        
+        # Convert to chart-friendly format
+        trend_data = []
+        for year in data.index:
+            year_data = {"year": int(year)}
+            for country in data.columns:
+                year_data[country] = float(data.loc[year, country]) if pd.notna(data.loc[year, country]) else 0
+            trend_data.append(year_data)
+        
+        return jsonify({
+            "status": "success",
+            "commodity": commodity,
+            "element": element_type,
+            "trend": trend_data,
+            "countries": data.columns.tolist()
+        })
+    except Exception as e:
+        logger.error(f"Error fetching commodity trend: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/global/top-exporters', methods=['GET'])
+def get_top_exporters():
+    """Get top exporting countries"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        commodity = request.args.get('commodity')
+        year = int(request.args.get('year', 2024))
+        limit = int(request.args.get('limit', 10))
+        element_type = request.args.get('element', 'Export quantity')
+        
+        data = global_market_processor.get_top_exporters(commodity, year, limit, element_type)
+        
+        if data.empty:
+            return jsonify({
+                "status": "success",
+                "commodity": commodity or "All",
+                "year": year,
+                "exporters": [],
+                "message": "No data available"
+            })
+        
+        exporters = data.to_dict('records')
+        return jsonify({
+            "status": "success",
+            "commodity": commodity or "All commodities",
+            "year": year,
+            "element": element_type,
+            "exporters": exporters,
+            "count": len(exporters)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching top exporters: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/global/country-commodities/<country>', methods=['GET'])
+def get_country_commodities(country):
+    """Get top commodities exported by a country"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        year = request.args.get('year', type=int)
+        limit = int(request.args.get('limit', 20))
+        
+        data = global_market_processor.get_country_commodity_exports(country, year)
+        
+        if data.empty:
+            return jsonify({
+                "status": "success",
+                "country": country,
+                "commodities": [],
+                "message": "No data available"
+            })
+        
+        data = data.head(limit)
+        commodities = data.to_dict('records')
+        
+        return jsonify({
+            "status": "success",
+            "country": country,
+            "year": year,
+            "commodities": commodities,
+            "count": len(commodities)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching country commodities: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/global/demand-forecast', methods=['GET'])
+def get_demand_forecast():
+    """Get export demand forecast"""
+    if not global_market_processor:
+        return jsonify({
+            "status": "error",
+            "message": "Global market data not available"
+        }), 503
+    
+    try:
+        commodity = request.args.get('commodity')
+        country = request.args.get('country')
+        
+        if not commodity:
+            return jsonify({
+                "status": "error",
+                "message": "Commodity parameter required"
+            }), 400
+        
+        forecast = global_market_processor.get_demand_forecast(commodity, country)
+        
+        return jsonify({
+            "status": "success",
+            "commodity": commodity,
+            "country": country or "Global",
+            "forecast": forecast
+        })
+    except Exception as e:
+        logger.error(f"Error generating forecast: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.errorhandler(404)
 def not_found(error):

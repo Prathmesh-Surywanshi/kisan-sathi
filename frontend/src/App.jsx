@@ -3,6 +3,7 @@ import { Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import './App.css';
 import Header from './components/Header';
 import Navbar from './components/Navbar';
+import GlobalMarketAccess from './pages/GlobalMarketAccess';
 import Home from './pages/Home';
 import MarketInsights from './pages/MarketInsights';
 import RecommendationPage from './pages/RecommendationPage';
@@ -42,6 +43,7 @@ function App() {
           <Route path="/result" element={<ResultsPage />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/market-insights" element={<MarketInsights crops={crops} />} />
+          <Route path="/global-market" element={<GlobalMarketAccess />} />
         </Routes>
       </div>
     </Router>
